@@ -3,6 +3,7 @@
 mod editor;
 mod github;
 mod model;
+mod syntax;
 mod termbg;
 mod theme;
 mod util;
