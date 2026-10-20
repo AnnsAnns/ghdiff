@@ -439,7 +439,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = if app.draft.is_some() {
         " Ctrl+S save · Esc cancel · Enter newline"
     } else {
-        " Tab focus · j/k move · c comment · s suggest · v range · d discard · S submit review · L since · ? help · q quit"
+        " Tab focus · j/k move · c comment · s suggest · v range · d discard · S review · L since · e editor · T terminal · ? help · q quit"
     };
     let line = if !app.status.is_empty() {
         Line::from(vec![
@@ -849,6 +849,8 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("Ctrl+S", "submit the comment (while writing)"),
         ("t", "toggle display of resolved threads"),
         ("o", "open the pull request in a browser"),
+        ("e", "open the current file in zeditor / VS Code"),
+        ("T", "open a terminal in the checkout"),
         ("S", "submit your review, publishing all drafts"),
         ("L", "show only changes since your last review"),
         ("R", "reload the pull request"),

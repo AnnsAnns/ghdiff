@@ -1,6 +1,7 @@
 //! Application state and event handling.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 
 use ratatui::crossterm::event::{
@@ -14,10 +15,11 @@ use ratatui::widgets::ListState;
 use crate::editor::Editor;
 use crate::github::{self, ReviewVerdict};
 use crate::model::{
-    self, Anchor, Comment, FileDiff, LineKind, Loaded, PrMeta, PrSummary, ReviewThread, Side,
+    self, Anchor, Comment, FileDiff, FileStatus, LineKind, Loaded, PrMeta, PrSummary, ReviewThread,
+    Side,
 };
 use crate::syntax::Highlighter;
-use crate::{theme, util};
+use crate::{launch, theme, util};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Screen {
@@ -155,6 +157,9 @@ type HlCache = HashMap<usize, Vec<Vec<Vec<(Style, String)>>>>;
 
 pub struct App {
     pub repo: String,
+    /// Checkout the review is viewed in: the context for the editor and
+    /// terminal shortcuts.
+    pub root: PathBuf,
     pub screen: Screen,
     pub loading_msg: String,
     pub error: String,
@@ -202,6 +207,7 @@ impl App {
         picker_state.select(Some(0));
         Self {
             repo,
+            root: launch::project_dir(),
             screen: Screen::Loading,
             loading_msg: String::new(),
             error: String::new(),
@@ -1304,6 +1310,8 @@ impl App {
                 self.start_load(n);
             }
             KeyCode::Char('o') => self.open_in_browser(),
+            KeyCode::Char('e') => self.open_in_editor(),
+            KeyCode::Char('T') => self.open_in_terminal(),
             KeyCode::Char('S') => self.start_review(),
             KeyCode::Char('L') => self.toggle_since_review(),
             KeyCode::Char(']') => self.next_file(1),
@@ -1647,6 +1655,79 @@ impl App {
                 .spawn();
         });
         self.status = format!("Opened {url}");
+    }
+
+    /// The file under review as it exists in the local checkout, together with
+    /// the line the cursor is on. `None` when the file is not checked out
+    /// (deleted by the pull request, or the checkout is on another branch).
+    pub fn current_location(&self) -> Option<(PathBuf, u32)> {
+        let file = self.files.get(self.file_index)?;
+        if file.status == FileStatus::Deleted {
+            return None;
+        }
+        let path = self.root.join(&file.path);
+        if !path.is_file() {
+            return None;
+        }
+        Some((path, self.cursor_lineno()))
+    }
+
+    /// The new-side line under the cursor, falling back to the closest code
+    /// line above it (comment boxes and hunk headers have no line of their own).
+    /// Removed lines have no new-side number, so the nearest one above is only
+    /// used when there is no better anchor.
+    fn cursor_lineno(&self) -> u32 {
+        let Some(file) = self.files.get(self.file_index) else {
+            return 1;
+        };
+        let start = self.view.cursor.min(self.view.meta.len().saturating_sub(1));
+        let mut removed = None;
+        for row in (0..=start).rev() {
+            if let Some(LineMeta::Code { hunk, line, .. }) = self.view.meta.get(row)
+                && let Some(dl) = file.hunks.get(*hunk).and_then(|h| h.lines.get(*line))
+            {
+                if let Some(n) = dl.new_lineno {
+                    return n;
+                }
+                removed.get_or_insert(dl.old_lineno.unwrap_or(1));
+            }
+        }
+        removed.unwrap_or(1)
+    }
+
+    /// Open the checkout in zeditor/VS Code, focused on the file being viewed.
+    fn open_in_editor(&mut self) {
+        let location = self.current_location();
+        let file = location.as_ref().map(|(p, l)| (p.as_path(), *l));
+        match launch::editor_launch(&self.root, file) {
+            Ok(launch) => match launch::run(&launch) {
+                Ok(()) => {
+                    let what = match &location {
+                        Some((path, line)) => {
+                            let rel = path.strip_prefix(&self.root).unwrap_or(path);
+                            format!("{}:{line}", rel.display())
+                        }
+                        None => self.root.display().to_string(),
+                    };
+                    self.status = format!("Opening {what} in {}", launch.name);
+                }
+                Err(e) => self.status = format!("Could not open the editor: {e:#}"),
+            },
+            Err(e) => self.status = format!("Could not open the editor: {e:#}"),
+        }
+    }
+
+    /// Open a terminal window in the checkout being reviewed.
+    fn open_in_terminal(&mut self) {
+        match launch::terminal_launch(&self.root) {
+            Ok(launch) => match launch::run(&launch) {
+                Ok(()) => {
+                    self.status = format!("Opening a terminal in {}", self.root.display());
+                }
+                Err(e) => self.status = format!("Could not open a terminal: {e:#}"),
+            },
+            Err(e) => self.status = format!("Could not open a terminal: {e:#}"),
+        }
     }
 }
 

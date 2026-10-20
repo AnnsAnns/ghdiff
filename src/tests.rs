@@ -1285,3 +1285,105 @@ fn hunk_header_splits_ranges_from_context() {
     // A header without the trailing marker is returned unchanged.
     assert_eq!(split("@@ -1 +1"), ("@@ -1 +1", ""));
 }
+
+#[test]
+fn editor_targets_the_viewed_file_in_the_checkout() {
+    let mut app = fixture_app();
+    app.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    app.files = vec![github::build_file_diff(
+        "Cargo.toml",
+        "modified",
+        None,
+        None,
+        1,
+        0,
+    )];
+    app.file_index = 0;
+    app.view = crate::app::FileView::default();
+
+    let (path, line) = app.current_location().expect("Cargo.toml is checked out");
+    assert_eq!(path, app.root.join("Cargo.toml"));
+    assert_eq!(line, 1, "no cursor row means line 1");
+
+    // A file that is not in the checkout has no target.
+    app.files = vec![github::build_file_diff(
+        "does/not/exist.c",
+        "modified",
+        None,
+        None,
+        1,
+        0,
+    )];
+    assert_eq!(app.current_location(), None);
+
+    // Neither does a file the pull request deletes.
+    app.files = vec![github::build_file_diff(
+        "Cargo.toml",
+        "removed",
+        None,
+        None,
+        1,
+        0,
+    )];
+    assert_eq!(app.current_location(), None);
+}
+
+#[test]
+fn editor_line_prefers_the_new_side_of_the_diff() {
+    use crate::app::LineMeta;
+    use crate::model::{DiffLine, Hunk, LineKind};
+
+    let mut app = fixture_app();
+    app.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    app.files = vec![model::FileDiff {
+        path: "Cargo.toml".into(),
+        old_path: Some("Cargo.toml".into()),
+        status: FileStatus::Modified,
+        additions: 1,
+        deletions: 1,
+        hunks: vec![Hunk {
+            header: "@@ -1,2 +1,2 @@".into(),
+            lines: vec![
+                DiffLine {
+                    kind: LineKind::Context,
+                    old_lineno: Some(1),
+                    new_lineno: Some(1),
+                    content: "[package]".into(),
+                },
+                DiffLine {
+                    kind: LineKind::Removed,
+                    old_lineno: Some(2),
+                    new_lineno: None,
+                    content: "old".into(),
+                },
+            ],
+        }],
+        binary: false,
+    }];
+    app.file_index = 0;
+    app.view = crate::app::FileView::default();
+    app.view.meta = vec![
+        LineMeta::Hunk,
+        LineMeta::Code {
+            hunk: 0,
+            line: 0,
+            kind: LineKind::Context,
+        },
+        LineMeta::Code {
+            hunk: 0,
+            line: 1,
+            kind: LineKind::Removed,
+        },
+    ];
+
+    app.view.cursor = 1;
+    assert_eq!(app.current_location().unwrap().1, 1, "context line");
+
+    // A removed line has no new-side number, so the cursor stays just above it.
+    app.view.cursor = 2;
+    assert_eq!(app.current_location().unwrap().1, 1, "removed line");
+
+    // Nothing code-like above the hunk header: fall back to the first line.
+    app.view.cursor = 0;
+    assert_eq!(app.current_location().unwrap().1, 1, "no code row");
+}

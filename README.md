@@ -61,6 +61,9 @@ in [`docs/layout.txt`](docs/layout.txt).)
   and a `⋯` marker, so it is hard to read straight past.
 - **Mouse support** — click to move the cursor or pick a file, drag or
   shift-click to select a range, and scroll the pane under the pointer.
+- **Jump out to your tools** — press `e` to open the file being viewed in
+  zeditor / VS Code at the current line, or `T` for a terminal in the
+  checkout.
 - **Outdated threads** (whose line no longer exists) are matched back to the
   current diff by content, or listed at the end of the file.
 
@@ -126,6 +129,8 @@ ghdiff
 | `Ctrl+S`           | submit the comment being written (`Esc` cancels)|
 | `t`                | toggle display of resolved threads              |
 | `o`                | open the pull request in a browser              |
+| `e`                | open the current file in zeditor / VS Code      |
+| `T`                | open a terminal in the checkout                 |
 | `S`                | submit your review, publishing every draft      |
 | `L`                | toggle "changes since your last review"         |
 | `R`                | reload the pull request                         |
@@ -134,6 +139,29 @@ ghdiff
 
 While writing a comment, `Enter` inserts a newline, `Ctrl+S` submits and `Esc`
 cancels.
+
+### Editor and terminal
+
+`e` opens the checkout in an editor, focused on the file you are viewing. When
+the file exists in your working copy it is passed along with the line under the
+cursor (`path/to/file.c:42`); if it is not there (deleted by the pull request,
+or your checkout is on another branch) the checkout alone is opened.
+
+`T` opens a terminal emulator in the checkout. Both use the repository root,
+which `ghdiff` finds with `git rev-parse --show-toplevel` (falling back to the
+current directory).
+
+The editor is auto-detected as `zeditor` (or `zed`) first, then `code` (or
+`codium`). The terminal tries `$TERMINAL`, then alacritty, kitty, wezterm,
+foot, ghostty, konsole, gnome-terminal, xfce4-terminal, x-terminal-emulator and
+xterm. Override either with an environment variable:
+
+```sh
+GHDIFF_EDITOR=code-insiders GHDIFF_TERMINAL=wezterm ghdiff 22910
+```
+
+`GHDIFF_EDITOR` should name a GUI editor command. An unrecognised command gets
+the checkout directory and the file as plain paths (no `:line` syntax).
 
 ### Suggestions
 

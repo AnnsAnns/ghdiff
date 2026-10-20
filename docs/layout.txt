@@ -37,4 +37,4 @@
 │  M makefiles/dependency_resolution.i… +3 -0│                                                                                                        
 │                                            │                                                                                                        
 └────────────────────────────────────────────┘                                                                                                        
- Loaded 33 files  Tab focus · j/k move · c comment · s suggest · v range · d discard · S submit review · L since · ? help · q quit                    
+ Loaded 33 files  Tab focus · j/k move · c comment · s suggest · v range · d discard · S review · L since · e editor · T terminal · ? help · q quit   

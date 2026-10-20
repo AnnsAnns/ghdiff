@@ -3,6 +3,7 @@
 mod app;
 mod editor;
 mod github;
+mod launch;
 mod model;
 mod syntax;
 mod termbg;
@@ -132,6 +133,8 @@ KEYS:
     t              toggle display of resolved threads
     [ / ]          previous / next file
     o              open the pull request in a browser
+    e              open the current file in zeditor / VS Code
+    T              open a terminal in the checkout
     L              show only changes since your last review
     R              reload
     q              quit
