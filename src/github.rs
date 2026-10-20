@@ -115,6 +115,28 @@ pub fn list_open_prs(repo: &str) -> Result<Vec<PrSummary>> {
     Ok(list)
 }
 
+/// Check out a pull request's head into the working copy at `dir`, so the
+/// editor opens the actual pull request rather than whatever branch happened
+/// to be checked out before.
+pub fn checkout_pr(repo: &str, number: u64, dir: &Path) -> Result<()> {
+    let output = Command::new("gh")
+        .args(["pr", "checkout", &number.to_string(), "--repo", repo])
+        .current_dir(dir)
+        .output()
+        .context("failed to run `gh`; is the GitHub CLI installed and on PATH?")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let detail = if stderr.trim().is_empty() {
+            stdout.trim()
+        } else {
+            stderr.trim()
+        };
+        bail!("`gh pr checkout` failed: {detail}");
+    }
+    Ok(())
+}
+
 pub fn fetch_pr(repo: &str, number: u64) -> Result<Loaded> {
     let (owner, name) = split_repo(repo)?;
 

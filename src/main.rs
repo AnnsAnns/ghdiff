@@ -134,6 +134,7 @@ KEYS:
     [ / ]          previous / next file
     o              open the pull request in a browser
     e              open the current file in zeditor / VS Code
+                   (offers `gh pr checkout` first if the PR is not checked out)
     T              open a terminal in the checkout
     L              show only changes since your last review
     R              reload

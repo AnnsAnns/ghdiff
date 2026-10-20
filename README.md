@@ -129,7 +129,7 @@ ghdiff
 | `Ctrl+S`           | submit the comment being written (`Esc` cancels)|
 | `t`                | toggle display of resolved threads              |
 | `o`                | open the pull request in a browser              |
-| `e`                | open the current file in zeditor / VS Code      |
+| `e`                | open the current file in zeditor / VS Code (`gh pr checkout` offered) |
 | `T`                | open a terminal in the checkout                 |
 | `S`                | submit your review, publishing every draft      |
 | `L`                | toggle "changes since your last review"         |
@@ -146,6 +146,12 @@ cancels.
 the file exists in your working copy it is passed along with the line under the
 cursor (`path/to/file.c:42`); if it is not there (deleted by the pull request,
 or your checkout is on another branch) the checkout alone is opened.
+
+If the pull request's head commit is not the one checked out, `e` first asks
+whether to run `gh pr checkout <number>` in the working copy. Press `y` (or
+`Enter`) to check it out and then open the editor, `n` to open what is
+currently there anyway, or `Esc` to cancel. Checkout errors (for example a
+dirty working tree) are shown in the same dialog.
 
 `T` opens a terminal emulator in the checkout. Both use the repository root,
 which `ghdiff` finds with `git rev-parse --show-toplevel` (falling back to the

@@ -1387,3 +1387,64 @@ fn editor_line_prefers_the_new_side_of_the_diff() {
     app.view.cursor = 0;
     assert_eq!(app.current_location().unwrap().1, 1, "no code row");
 }
+
+#[test]
+fn checkout_prompt_renders_and_cancels() {
+    let mut app = fixture_app();
+    app.checkout_prompt = Some(crate::app::CheckoutPrompt {
+        running: false,
+        error: None,
+    });
+    let screen = render(&mut app, 120, 40);
+    assert!(screen.contains("not checked out"), "\n{screen}");
+    assert!(screen.contains("gh pr checkout 22910"), "\n{screen}");
+    assert!(screen.contains("y check out"), "\n{screen}");
+
+    app.on_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert!(app.checkout_prompt.is_none());
+}
+
+#[test]
+fn opening_the_editor_offers_to_check_out_the_pr() {
+    let mut app = fixture_app();
+    app.offline = false;
+    app.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    app.meta.as_mut().unwrap().head_sha = "0".repeat(40);
+
+    // Without git (or outside a checkout) there is nothing to offer.
+    if app.pr_checked_out() {
+        return;
+    }
+
+    press(&mut app, 'e');
+    assert!(
+        app.checkout_prompt.is_some(),
+        "expected a checkout prompt instead of launching the editor"
+    );
+}
+
+#[test]
+fn detects_when_the_pr_head_is_checked_out() {
+    let mut app = fixture_app();
+    app.root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let Ok(output) = std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(&app.root)
+        .output()
+    else {
+        return;
+    };
+    if !output.status.success() {
+        return;
+    }
+    let head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if head.is_empty() {
+        return;
+    }
+
+    app.meta.as_mut().unwrap().head_sha = head;
+    assert!(app.pr_checked_out());
+
+    app.meta.as_mut().unwrap().head_sha = "0".repeat(40);
+    assert!(!app.pr_checked_out());
+}

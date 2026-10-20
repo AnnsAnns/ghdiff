@@ -177,6 +177,9 @@ fn draw_main(frame: &mut Frame, app: &mut App) {
     if let Some(review) = &app.review_draft {
         draw_review(frame, review, app.pending_count());
     }
+    if let Some(prompt) = &app.checkout_prompt {
+        draw_checkout(frame, app, prompt);
+    }
     if app.help {
         draw_help(frame, area);
     }
@@ -806,6 +809,90 @@ fn draw_review(frame: &mut Frame, review: &crate::app::ReviewDraft, pending: usi
     );
 }
 
+/// Confirmation modal offering to run `gh pr checkout` before opening the
+/// editor, shown when the working copy is not on the pull request's head.
+fn draw_checkout(frame: &mut Frame, app: &App, prompt: &crate::app::CheckoutPrompt) {
+    let area = frame.area();
+    let width = area.width.saturating_sub(8).clamp(40, 76);
+    let text_w = width.saturating_sub(4) as usize;
+    let number = app.pr_number();
+
+    let mut body: Vec<Line> = Vec::new();
+    let intro = format!("#{number} is not checked out in this working copy.");
+    for chunk in util::wrap_text(&intro, text_w) {
+        body.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(chunk, Style::default().fg(theme::t().text)),
+        ]));
+    }
+
+    let location = format!("{}  ·  {}", app.repo, app.root.display());
+    for chunk in util::wrap_text(&location, text_w) {
+        body.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(chunk, Style::default().fg(theme::t().faint)),
+        ]));
+    }
+    body.push(Line::from(""));
+
+    let question = format!("Check it out with `gh pr checkout {number}` and open the editor?");
+    for chunk in util::wrap_text(&question, text_w) {
+        body.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(chunk, Style::default().fg(theme::t().text)),
+        ]));
+    }
+
+    if prompt.running {
+        body.push(Line::from(""));
+        body.push(Line::from(vec![
+            Span::raw(" "),
+            Span::styled(
+                "Checking out…",
+                Style::default()
+                    .fg(theme::t().accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+    } else if let Some(error) = &prompt.error {
+        body.push(Line::from(""));
+        for chunk in util::wrap_text(error, text_w) {
+            body.push(Line::from(vec![
+                Span::raw(" "),
+                Span::styled(chunk, Style::default().fg(theme::t().red)),
+            ]));
+        }
+    }
+
+    let height = (body.len() as u16 + 2)
+        .min(area.height.saturating_sub(2))
+        .max(6);
+    let rect = centered_fixed(area, width, height);
+    frame.render_widget(Clear, rect);
+
+    let block = Block::bordered()
+        .border_style(Style::default().fg(theme::t().accent))
+        .title(Span::styled(
+            format!(" check out pull request #{number} "),
+            Style::default()
+                .fg(theme::t().accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+        .title_bottom(Span::styled(
+            if prompt.running {
+                " waiting for `gh pr checkout` "
+            } else if prompt.error.is_some() {
+                " y retry · n open anyway · Esc cancel "
+            } else {
+                " y check out · n open anyway · Esc cancel "
+            },
+            Style::default().fg(theme::t().faint),
+        ));
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    frame.render_widget(Paragraph::new(body), inner);
+}
+
 fn draw_help(frame: &mut Frame, area: Rect) {
     let rect = centered(area, 70, 80);
     frame.render_widget(Clear, rect);
@@ -849,7 +936,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         ("Ctrl+S", "submit the comment (while writing)"),
         ("t", "toggle display of resolved threads"),
         ("o", "open the pull request in a browser"),
-        ("e", "open the current file in zeditor / VS Code"),
+        ("e", "open the file in zeditor / VS Code (offers checkout)"),
         ("T", "open a terminal in the checkout"),
         ("S", "submit your review, publishing all drafts"),
         ("L", "show only changes since your last review"),

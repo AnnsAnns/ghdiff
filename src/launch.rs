@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(launch.dir, Path::new(DIR));
         assert_eq!(
             launch.args,
-            vec![DIR, "/tmp/ghdiff-checkout/src/main.rs:42"]
+            vec!["-n", DIR, "/tmp/ghdiff-checkout/src/main.rs:42"]
         );
     }
 

@@ -117,6 +117,13 @@ pub struct ReviewDraft {
     pub error: Option<String>,
 }
 
+/// Asks whether to check the pull request out into the working copy before
+/// opening the editor on it.
+pub struct CheckoutPrompt {
+    pub running: bool,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RangeSel {
     pub rows: Vec<usize>,
@@ -150,6 +157,8 @@ pub enum Msg {
     },
     SinceReviewNone,
     SinceReviewErr(String),
+    CheckoutDone,
+    CheckoutErr(String),
 }
 
 /// Per-file syntax highlight cache: `file index -> hunk -> line -> spans`.
@@ -180,6 +189,7 @@ pub struct App {
     hl_cache: HlCache,
     pub draft: Option<Draft>,
     pub review_draft: Option<ReviewDraft>,
+    pub checkout_prompt: Option<CheckoutPrompt>,
     pub status: String,
     pub should_quit: bool,
     pub help: bool,
@@ -227,6 +237,7 @@ impl App {
             hl_cache: HashMap::new(),
             draft: None,
             review_draft: None,
+            checkout_prompt: None,
             status: String::new(),
             should_quit: false,
             help: false,
@@ -365,6 +376,17 @@ impl App {
             Msg::SinceReviewErr(e) => {
                 self.since_review_loading = false;
                 self.status = format!("Could not compute changes since your review: {e}");
+            }
+            Msg::CheckoutDone => {
+                self.checkout_prompt = None;
+                self.status = format!("Checked out #{}", self.pr_number());
+                self.launch_editor();
+            }
+            Msg::CheckoutErr(e) => {
+                if let Some(prompt) = self.checkout_prompt.as_mut() {
+                    prompt.running = false;
+                    prompt.error = Some(e);
+                }
             }
         }
     }
@@ -1234,6 +1256,10 @@ impl App {
             self.on_draft_key(key);
             return;
         }
+        if self.checkout_prompt.is_some() {
+            self.on_checkout_key(key);
+            return;
+        }
         if self.help {
             self.help = false;
             return;
@@ -1379,6 +1405,35 @@ impl App {
                 "Select a range with j/k, then press c to comment (Esc cancels)".to_string();
         } else {
             self.status = "Move onto a code line to start a range selection".to_string();
+        }
+    }
+
+    /// Handle keys while the "check out this pull request?" prompt is open.
+    fn on_checkout_key(&mut self, key: KeyEvent) {
+        if is_quit(&key) {
+            self.should_quit = true;
+            return;
+        }
+        let running = self
+            .checkout_prompt
+            .as_ref()
+            .map(|p| p.running)
+            .unwrap_or(false);
+        if running {
+            return;
+        }
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => self.start_checkout(),
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                // Go ahead with whatever is checked out right now.
+                self.checkout_prompt = None;
+                self.launch_editor();
+            }
+            KeyCode::Esc => {
+                self.checkout_prompt = None;
+                self.status = "Checkout cancelled".to_string();
+            }
+            _ => {}
         }
     }
 
@@ -1532,7 +1587,11 @@ impl App {
     }
 
     pub fn on_mouse(&mut self, m: MouseEvent) {
-        if self.screen != Screen::Main || self.draft.is_some() || self.help {
+        if self.screen != Screen::Main
+            || self.draft.is_some()
+            || self.checkout_prompt.is_some()
+            || self.help
+        {
             return;
         }
         match m.kind {
@@ -1696,7 +1755,79 @@ impl App {
     }
 
     /// Open the checkout in zeditor/VS Code, focused on the file being viewed.
+    /// When the pull request's head is not checked out, offer to run
+    /// `gh pr checkout` first.
     fn open_in_editor(&mut self) {
+        if self.offline || self.meta.is_none() || self.repo.is_empty() || self.pr_checked_out() {
+            self.launch_editor();
+            return;
+        }
+        self.checkout_prompt = Some(CheckoutPrompt {
+            running: false,
+            error: None,
+        });
+        self.status = format!("#{} is not checked out locally", self.pr_number());
+    }
+
+    /// Is the commit under review the one in the working copy?
+    pub fn pr_checked_out(&self) -> bool {
+        let Some(meta) = &self.meta else {
+            return true;
+        };
+        if meta.head_sha.is_empty() {
+            return true;
+        }
+        // Without a readable HEAD there is nothing to offer to check out;
+        // behave as before and open what is there.
+        let Some(head) = self.local_head() else {
+            return true;
+        };
+        head.eq_ignore_ascii_case(&meta.head_sha)
+    }
+
+    fn local_head(&self) -> Option<String> {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&self.root)
+            .args(["rev-parse", "HEAD"])
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let head = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!head.is_empty()).then_some(head)
+    }
+
+    /// Check the pull request out into the working copy, then open the editor.
+    fn start_checkout(&mut self) {
+        let Some(prompt) = self.checkout_prompt.as_mut() else {
+            return;
+        };
+        if prompt.running {
+            return;
+        }
+        prompt.running = true;
+        prompt.error = None;
+        let repo = self.repo.clone();
+        let number = self.pr_number();
+        let dir = self.root.clone();
+        let tx = self.tx.clone();
+        self.status = format!("Checking out {repo}#{number}…");
+        std::thread::spawn(move || match github::checkout_pr(&repo, number, &dir) {
+            Ok(()) => {
+                let _ = tx.send(Msg::CheckoutDone);
+            }
+            Err(e) => {
+                let _ = tx.send(Msg::CheckoutErr(format!("{e:#}")));
+            }
+        });
+    }
+
+    /// Open the editor on the file being viewed (or the checkout itself).
+    fn launch_editor(&mut self) {
         let location = self.current_location();
         let file = location.as_ref().map(|(p, l)| (p.as_path(), *l));
         match launch::editor_launch(&self.root, file) {
