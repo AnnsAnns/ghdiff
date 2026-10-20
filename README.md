@@ -1,7 +1,7 @@
 # ghdiff
 
-A local terminal viewer for GitHub pull requests, built with Rust and
-[ratatui](https://ratatui.rs). It aims to feel like the GitHub "Files changed"
+A local terminal viewer for GitHub pull requests. 
+It aims to feel like the GitHub "Files changed"
 tab without leaving your terminal.
 
 ```
