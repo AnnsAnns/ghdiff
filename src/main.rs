@@ -6,6 +6,8 @@ mod github;
 mod model;
 mod syntax;
 mod termbg;
+#[cfg(test)]
+mod tests;
 mod theme;
 mod ui;
 mod util;

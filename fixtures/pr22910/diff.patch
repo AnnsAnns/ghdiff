@@ -1,0 +1,1464 @@
+diff --git a/Makefile.dep b/Makefile.dep
+index 4a4a26e4b315..6f5e72157c15 100644
+--- a/Makefile.dep
++++ b/Makefile.dep
+@@ -12,10 +12,11 @@
+ # processed before RIOT ones to be evaluated before the 'default' rules.
+ -include $(EXTERNAL_MODULE_PATHS:%=%Makefile.dep)
+ 
+-# pull dependencies from sys, drivers and (common) boards
++# pull dependencies from sys, drivers, (common) boards and (common) cpus
+ include $(RIOTBASE)/sys/Makefile.dep
+ include $(RIOTBASE)/drivers/Makefile.dep
+ include $(RIOTBASE)/boards/Makefile.dep
++include $(RIOTBASE)/cpu/Makefile.dep
+ 
+ # pull Makefile.dep of each driver modules if they exist
+ -include $(sort $(USEMODULE:%=$(RIOTBASE)/drivers/%/Makefile.dep))
+diff --git a/Makefile.include b/Makefile.include
+index a4668169b4a5..e1706e7e111c 100644
+--- a/Makefile.include
++++ b/Makefile.include
+@@ -359,6 +359,9 @@ include $(RIOTCPU)/$(CPU)/Makefile.include
+ # include global Makefile.include for `boards` modules
+ include $(RIOTBASE)/boards/Makefile.include
+ 
++# include global Makefile.include for `cpu` modules
++include $(RIOTBASE)/cpu/Makefile.include
++
+ # Include common programmer logic if available
+ -include $(RIOTMAKE)/tools/$(PROGRAMMER).inc.mk
+ 
+diff --git a/cpu/Makefile b/cpu/Makefile
+new file mode 100644
+index 000000000000..e75eda912115
+--- /dev/null
++++ b/cpu/Makefile
+@@ -0,0 +1,6 @@
++# SORT THIS ALPHABETICALLY BY COMMON CPU MODULE NAME!
++ifneq (,$(filter rpx0xx_periph_common,$(USEMODULE)))
++  DIRS += $(RIOTCPU)/rpx0xx/periph_common
++endif
++
++include $(RIOTBASE)/Makefile.base
+diff --git a/cpu/Makefile.dep b/cpu/Makefile.dep
+new file mode 100644
+index 000000000000..da3189271d29
+--- /dev/null
++++ b/cpu/Makefile.dep
+@@ -0,0 +1,4 @@
++# SORT THIS ALPHABETICALLY BY COMMON CPU MODULE NAME!
++ifneq (,$(filter rpx0xx_periph_common,$(USEMODULE)))
++  include $(RIOTCPU)/rpx0xx/periph_common/Makefile.dep
++endif
+diff --git a/cpu/Makefile.features b/cpu/Makefile.features
+new file mode 100644
+index 000000000000..23eb72a9b259
+--- /dev/null
++++ b/cpu/Makefile.features
+@@ -0,0 +1 @@
++# SORT THIS ALPHABETICALLY BY COMMON CPU MODULE NAME!
+diff --git a/cpu/Makefile.include b/cpu/Makefile.include
+new file mode 100644
+index 000000000000..d48d20f92025
+--- /dev/null
++++ b/cpu/Makefile.include
+@@ -0,0 +1,4 @@
++# SORT THIS ALPHABETICALLY BY COMMON CPU MODULE NAME!
++ifneq (,$(filter rpx0xx_periph_common,$(USEMODULE)))
++  include $(RIOTCPU)/rpx0xx/periph_common/Makefile.include
++endif
+diff --git a/cpu/rp2350_common/Makefile.dep b/cpu/rp2350_common/Makefile.dep
+index 51983f6a1cf8..4f01a00c7b58 100644
+--- a/cpu/rp2350_common/Makefile.dep
++++ b/cpu/rp2350_common/Makefile.dep
+@@ -1,4 +1,6 @@
+ USEMODULE += periph
++# peripheral drivers shared with the RP2040
++USEMODULE += rpx0xx_periph_common
+ USEPKG += picosdk
+ # We tell the build system that common needs to be built
+ USEMODULE += rp2350_common
+diff --git a/cpu/rp2350_common/Makefile.features b/cpu/rp2350_common/Makefile.features
+index 783de0af307d..e4f5cedabf1d 100644
+--- a/cpu/rp2350_common/Makefile.features
++++ b/cpu/rp2350_common/Makefile.features
+@@ -1,2 +1,3 @@
+ FEATURES_PROVIDED += periph_gpio
+ FEATURES_PROVIDED += periph_uart
++FEATURES_PROVIDED += periph_usbdev
+diff --git a/cpu/rp2350_common/clock.c b/cpu/rp2350_common/clock.c
+index 243b64451160..156bbba85621 100644
+--- a/cpu/rp2350_common/clock.c
++++ b/cpu/rp2350_common/clock.c
+@@ -15,6 +15,8 @@
+  */
+ 
+ #include "periph_cpu.h"
++#include "regs/clocks.h"
++#include "regs/resets.h"
+ 
+ void clock_reset(void) {
+     /* Reset the clock system */
+@@ -68,4 +70,30 @@ void cpu_clock_init(void) {
+     CLOCKS->CLK_PERI_CTRL = CLK_PERI_CTRL_ENABLE_BIT;
+ }
+ 
++void clock_usb_init(void)
++{
++    /* take the USB PLL out of reset */
++    atomic_set(&RESETS->RESET, RESETS_RESET_PLL_USB_BITS);
++    reset_component(RESETS_RESET_PLL_USB_BITS, RESETS_RESET_PLL_USB_BITS);
++
++    /* power up the VCO and wait for the PLL to lock */
++    PLL_USB->FBDIV_INT = PLL_USB_FEEDBACK_DIVIDER_VALUE;
++    atomic_clear(&PLL_USB->PWR, PLL_PWR_PD_BITS | PLL_PWR_VCOPD_BITS);
++    while (!(PLL_USB->CS & PLL_CS_LOCK_BITS)) {
++        /* Wait for the PLL to lock */
++    }
++
++    /* set up the post dividers and power them up */
++    PLL_USB->PRIM = (PLL_USB_PD1 << PLL_PRIM_POSTDIV1_LSB) |
++                    (PLL_USB_PD2 << PLL_PRIM_POSTDIV2_LSB);
++    atomic_clear(&PLL_USB->PWR, PLL_PWR_POSTDIVPD_BITS);
++
++    /* CLK_USB = PLL_USB / 1 */
++    atomic_clear(&CLOCKS->CLK_USB_CTRL, CLOCKS_CLK_USB_CTRL_ENABLE_BITS);
++    CLOCKS->CLK_USB_DIV = 1u << CLOCKS_CLK_USB_DIV_INT_LSB;
++    CLOCKS->CLK_USB_CTRL = (CLOCKS_CLK_USB_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB <<
++                            CLOCKS_CLK_USB_CTRL_AUXSRC_LSB) |
++                           CLOCKS_CLK_USB_CTRL_ENABLE_BITS;
++}
++
+ /** @} */
+diff --git a/cpu/rp2350_common/cpu.c b/cpu/rp2350_common/cpu.c
+index 1a851d49c913..6c680def7641 100644
+--- a/cpu/rp2350_common/cpu.c
++++ b/cpu/rp2350_common/cpu.c
+@@ -22,6 +22,7 @@
+ #include "cpu.h"
+ #include "clock_conf.h"
+ #include "kernel_init.h"
++#include "modules.h"
+ #include "periph/init.h"
+ #include "periph/uart.h"
+ #include "periph_conf.h"
+@@ -46,6 +47,11 @@ void rp2350_init(void)
+     /* initialize the CPU clock */
+     cpu_clock_init();
+ 
++    /* the USB device controller needs a 48 MHz clock */
++    if (IS_USED(MODULE_PERIPH_USBDEV)) {
++        clock_usb_init();
++    }
++
+     /* initialize the early peripherals */
+     early_init();
+ 
+diff --git a/cpu/rp2350_common/include/clock_conf.h b/cpu/rp2350_common/include/clock_conf.h
+index 371612dfa2b5..dd0a061f5f6b 100644
+--- a/cpu/rp2350_common/include/clock_conf.h
++++ b/cpu/rp2350_common/include/clock_conf.h
+@@ -91,6 +91,12 @@
+ /** Selected field value for the system clock control register
+  * to select the peripheral clock */
+ #define CLK_SYS_SELECTED_PERI_FIELD_VALUE 2u
++/** Feedback divider of the USB PLL: 12 MHz * 100 = 1200 MHz VCO frequency */
++#define PLL_USB_FEEDBACK_DIVIDER_VALUE 100u
++/** Post divider 1 of the USB PLL: 1200 MHz / 5 = 240 MHz */
++#define PLL_USB_PD1 5u
++/** Post divider 2 of the USB PLL: 240 MHz / 5 = 48 MHz */
++#define PLL_USB_PD2 5u
+ /** RIOT core clock frequency defined as the CPU frequency */
+ #define CLOCK_CORECLOCK MHZ(12u)
+ 
+@@ -152,6 +158,12 @@ void clock_reset(void);
+  */
+ void cpu_clock_init(void);
+ 
++/**
++ * @brief Configures the USB PLL to 48 MHz and sets CLK_USB to it
++ * @pre The XOSC must be running, see cpu_clock_init()
++ */
++void clock_usb_init(void);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/cpu/rp2350_common/include/periph_cpu.h b/cpu/rp2350_common/include/periph_cpu.h
+index b8f859e127a7..0d42d3c275fe 100644
+--- a/cpu/rp2350_common/include/periph_cpu.h
++++ b/cpu/rp2350_common/include/periph_cpu.h
+@@ -123,6 +123,11 @@ static inline uint32_t* calculate_gpio_io_ctrl_register_addr(gpio_t pin) {
+     return (uint32_t*) (calculate_gpio_io_status_register_addr(pin) + 4);
+ }
+ 
++/**
++ * @brief   Number of USB device endpoints per direction, including EP0
++ */
++#define USBDEV_NUM_ENDPOINTS    16
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/cpu/rp2350_riscv/Makefile b/cpu/rp2350_riscv/Makefile
+index ee03da8b7063..a61605f81418 100644
+--- a/cpu/rp2350_riscv/Makefile
++++ b/cpu/rp2350_riscv/Makefile
+@@ -4,5 +4,6 @@ MODULE = cpu
+ # add a list of subdirectories, that should also be built
+ DIRS += $(RIOTCPU)/rp2350_common
+ DIRS += $(RIOTCPU)/riscv_common
++DIRS += periph
+ 
+ include $(RIOTBASE)/Makefile.base
+diff --git a/cpu/rp2350_riscv/Makefile.dep b/cpu/rp2350_riscv/Makefile.dep
+index d648a1452e80..dfa9c8f18188 100644
+--- a/cpu/rp2350_riscv/Makefile.dep
++++ b/cpu/rp2350_riscv/Makefile.dep
+@@ -1,3 +1,4 @@
+ FEATURES_REQUIRED += periph_xh3irq
++USEMODULE += rp2350_riscv_periph
+ include $(RIOTCPU)/rp2350_common/Makefile.dep
+ include $(RIOTCPU)/riscv_common/Makefile.dep
+diff --git a/cpu/rp2350_riscv/Makefile.features b/cpu/rp2350_riscv/Makefile.features
+index 6434d7d7999e..5f912bfca07a 100644
+--- a/cpu/rp2350_riscv/Makefile.features
++++ b/cpu/rp2350_riscv/Makefile.features
+@@ -1,6 +1,7 @@
+ CPU_CORE := rv32imac
+ CPU_FAM  := RP2350
+ 
++FEATURES_PROVIDED += periph_pm
+ FEATURES_PROVIDED += periph_xh3irq
+ 
+ include $(RIOTCPU)/rp2350_common/Makefile.features
+diff --git a/cpu/rp2350_riscv/periph/Makefile b/cpu/rp2350_riscv/periph/Makefile
+new file mode 100644
+index 000000000000..97867c33dce9
+--- /dev/null
++++ b/cpu/rp2350_riscv/periph/Makefile
+@@ -0,0 +1,3 @@
++MODULE = rp2350_riscv_periph
++
++include $(RIOTMAKE)/periph.mk
+diff --git a/cpu/rp2350_riscv/periph/pm.c b/cpu/rp2350_riscv/periph/pm.c
+new file mode 100644
+index 000000000000..8273f2656374
+--- /dev/null
++++ b/cpu/rp2350_riscv/periph/pm.c
+@@ -0,0 +1,41 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Example University
++ * SPDX-License-Identifier: LGPL-2.1-only
++ */
++
++/**
++ * @ingroup     cpu_rp2350
++ * @{
++ *
++ * @file
++ * @brief       Power management for the RISC-V cores of the RP2350
++ *
++ * @author      D. Author
++ * @}
++ */
++
++#include "irq.h"
++#include "periph/pm.h"
++#include "periph_cpu.h"
++#include "regs/psm.h"
++#include "regs/watchdog.h"
++
++void pm_set_lowest(void)
++{
++    __asm__ volatile ("wfi");
++}
++
++void pm_reboot(void)
++{
++    irq_disable();
++
++    /* make sure the boot ROM does a regular boot instead of jumping to the
++     * entry point stored in the watchdog scratch registers */
++    WATCHDOG->SCRATCH4 = 0;
++    /* reset everything except the oscillators, as the Pico SDK does */
++    PSM->WDSEL = PSM_WDSEL_BITS & ~(PSM_WDSEL_ROSC_BITS | PSM_WDSEL_XOSC_BITS);
++    /* trigger a watchdog reset immediately */
++    WATCHDOG->CTRL = WATCHDOG_CTRL_TRIGGER_BITS;
++
++    while (1) {}
++}
+diff --git a/cpu/rpx0xx/Makefile.dep b/cpu/rpx0xx/Makefile.dep
+index 71f7903107a6..b1c2ec952bbe 100644
+--- a/cpu/rpx0xx/Makefile.dep
++++ b/cpu/rpx0xx/Makefile.dep
+@@ -7,4 +7,7 @@ ifneq (,$(filter pio_i2c periph_i2c,$(FEATURES_USED)))
+   USEMODULE += pio_i2c
+ endif
+ 
++# peripheral drivers shared with the RP2350
++USEMODULE += rpx0xx_periph_common
++
+ include $(RIOTCPU)/cortexm_common/Makefile.dep
+diff --git a/cpu/rpx0xx/Makefile.features b/cpu/rpx0xx/Makefile.features
+index c5898736565e..47d7833ed7f4 100644
+--- a/cpu/rpx0xx/Makefile.features
++++ b/cpu/rpx0xx/Makefile.features
+@@ -9,4 +9,5 @@ FEATURES_PROVIDED += periph_pio
+ FEATURES_PROVIDED += periph_timer_periodic
+ FEATURES_PROVIDED += periph_uart_reconfigure
+ FEATURES_PROVIDED += periph_uart_modecfg
++FEATURES_PROVIDED += periph_usbdev
+ FEATURES_PROVIDED += pio_i2c
+diff --git a/cpu/rpx0xx/clock.c b/cpu/rpx0xx/clock.c
+index 1952fab838ac..98b82afada13 100644
+--- a/cpu/rpx0xx/clock.c
++++ b/cpu/rpx0xx/clock.c
+@@ -127,6 +127,14 @@ void clock_periph_configure(CLOCKS_CLK_PERI_CTRL_AUXSRC_Enum aux)
+     io_reg_atomic_set(&CLOCKS->CLK_PERI_CTRL, (1u << CLOCKS_CLK_PERI_CTRL_ENABLE_Pos));
+ }
+ 
++void clock_usb_configure(CLOCKS_CLK_USB_CTRL_AUXSRC_Enum aux)
++{
++    io_reg_atomic_clear(&CLOCKS->CLK_USB_CTRL, (1u << CLOCKS_CLK_USB_CTRL_ENABLE_Pos));
++    io_reg_write_dont_corrupt(&CLOCKS->CLK_USB_CTRL, aux << CLOCKS_CLK_USB_CTRL_AUXSRC_Pos,
++                              CLOCKS_CLK_USB_CTRL_AUXSRC_Msk);
++    io_reg_atomic_set(&CLOCKS->CLK_USB_CTRL, (1u << CLOCKS_CLK_USB_CTRL_ENABLE_Pos));
++}
++
+ void clock_gpout0_configure(uint32_t f_in, uint32_t f_out, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_Enum aux)
+ {
+     assert(f_out <= f_in);
+diff --git a/cpu/rpx0xx/cpu.c b/cpu/rpx0xx/cpu.c
+index c6c38f600eea..c506fb6bb9d8 100644
+--- a/cpu/rpx0xx/cpu.c
++++ b/cpu/rpx0xx/cpu.c
+@@ -63,6 +63,11 @@ static void _cpu_reset(void)
+     pll_reset_sys();
+     /* start the system PLL (typically takes the 12 MHz XOSC to generate 125 MHz) */
+     pll_start_sys(PLL_SYS_REF_DIV, PLL_SYS_VCO_FEEDBACK_SCALE, PLL_SYS_POSTDIV1, PLL_SYS_POSTDIV2);
++    /* start usb PLL if necessary */
++    if (IS_USED(MODULE_PERIPH_USBDEV) || IS_USED(MODULE_PERIPH_ADC)) {
++        pll_start_usb(PLL_USB_REF_DIV, PLL_USB_VCO_FEEDBACK_SCALE,
++                      PLL_USB_POSTDIV1, PLL_USB_POSTDIV2);
++    }
+     /* configure reference clock to run from XOSC (typically 12 MHz) */
+     clock_ref_configure_source(CLOCK_XOSC, CLOCK_XOSC,
+                                CLOCKS_CLK_REF_CTRL_SRC_xosc_clksrc);
+@@ -71,6 +76,10 @@ static void _cpu_reset(void)
+                                    CLOCKS_CLK_SYS_CTRL_AUXSRC_clksrc_pll_sys);
+     /* configure the peripheral clock to run from the system clock */
+     clock_periph_configure(CLOCK_PERIPH_SOURCE);
++    /* configure the usb clock */
++    if (IS_USED(MODULE_PERIPH_USBDEV)) {
++        clock_usb_configure(CLOCKS_CLK_USB_CTRL_AUXSRC_clksrc_pll_usb);
++    }
+     if (IS_USED(ENABLE_DEBUG)) {
+         /* check clk_ref with logic analyzer */
+         clock_gpout0_configure(CLOCK_XOSC, CLOCK_XOSC,
+@@ -79,8 +88,6 @@ static void _cpu_reset(void)
+ 
+     /* Configure USB PLL to deliver 48MHz needed by ADC */
+     if (IS_USED(MODULE_PERIPH_ADC)) {
+-        pll_start_usb(PLL_USB_REF_DIV, PLL_USB_VCO_FEEDBACK_SCALE,
+-                      PLL_USB_POSTDIV1, PLL_USB_POSTDIV2);
+         clock_adc_configure(CLOCKS_CLK_ADC_CTRL_AUXSRC_clksrc_pll_usb);
+     }
+ }
+diff --git a/cpu/rpx0xx/include/compat_layer.h b/cpu/rpx0xx/include/compat_layer.h
+new file mode 100644
+index 000000000000..a316922ef926
+--- /dev/null
++++ b/cpu/rpx0xx/include/compat_layer.h
+@@ -0,0 +1,89 @@
++/*
++ * SPDX-FileCopyrightText: 2025 A. Author <noreply@example.invalid>
++ * SPDX-FileCopyrightText: 2025 Example College
++ * SPDX-License-Identifier: LGPL-2.1-only
++ */
++
++#pragma once
++
++/**
++ * @ingroup         cpu_rp2350
++ * @{
++ *
++ * @file
++ * @brief           Compatibility layer for different CPU architectures
++ *
++ * @author          A. Author <noreply@example.invalid>
++ */
++
++#include "periph_cpu.h"
++#include <stdint.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/**
++ * @brief     Enable the given IRQ
++ * @param[in] irq_no IRQ number to enable
++ */
++static inline void rp_irq_enable(uint32_t irq_no)
++{
++    NVIC_EnableIRQ(irq_no);
++}
++
++/**
++ * @brief     Disable the given IRQ
++ * @param[in] irq_no IRQ number to disable
++ */
++static inline void rp_irq_disable(uint32_t irq_no)
++{
++    NVIC_DisableIRQ(irq_no);
++}
++
++/**
++ * @brief   Called upon the end of an ISR
++ */
++static inline void rp_end_isr(void)
++{
++    cortexm_isr_end();
++}
++
++/**
++ * @brief Initialize the architecture-specific components
++ */
++static inline void rp_arch_init(void)
++{
++    cortexm_init();
++}
++
++/**
++ * @brief Wait For Interrupt abstraction
++ */
++static inline void rp_block_core(void)
++{
++    __WFI();
++}
++
++/**
++ * @brief Set Event abstraction
++ */
++static inline void rp_unblock_core(void)
++{
++    __SEV();
++}
++
++/**
++ * @brief   Get a pointer to the CPU specific interrupt vector table
++ * @return  Pointer to the CPU specific interrupt vector table
++ */
++static inline uint32_t* rp_get_vector_poiner(void)
++{
++    return &_isr_vectors;
++}
++
++#ifdef __cplusplus
++}
++#endif
++
++/** @} */
+diff --git a/cpu/rpx0xx/include/periph_cpu.h b/cpu/rpx0xx/include/periph_cpu.h
+index 1c889cb409b3..2ab15dd2c5cf 100644
+--- a/cpu/rpx0xx/include/periph_cpu.h
++++ b/cpu/rpx0xx/include/periph_cpu.h
+@@ -617,6 +617,14 @@ void clock_ref_configure_aux_source(uint32_t f_in, uint32_t f_out,
+  */
+ void clock_periph_configure(CLOCKS_CLK_PERI_CTRL_AUXSRC_Enum aux);
+ 
++/**
++ * @brief   Configure the usb clock to run from a dedicated auxiliary
++ *          clock source
++ *
++ * @param   aux     Auxiliary clock source
++ */
++void clock_usb_configure(CLOCKS_CLK_USB_CTRL_AUXSRC_Enum aux);
++
+ /**
+  * @brief   Configure gpio21 as clock output pin
+  *
+@@ -808,6 +816,11 @@ typedef struct {
+ #define PERIPH_SPI_NEEDS_TRANSFER_REGS
+ #define PERIPH_SPI_NEEDS_TRANSFER_BYTE
+ 
++/**
++ * @brief   Number of USB device endpoints per direction, including EP0
++ */
++#define USBDEV_NUM_ENDPOINTS    16
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/cpu/rpx0xx/periph_common/Makefile b/cpu/rpx0xx/periph_common/Makefile
+new file mode 100644
+index 000000000000..20a0796f714f
+--- /dev/null
++++ b/cpu/rpx0xx/periph_common/Makefile
+@@ -0,0 +1,9 @@
++# peripheral drivers shared by the RP2040 and the RP2350
++MODULE = rpx0xx_periph_common
++
++# reset into the ROM bootloader via USB
++ifneq (,$(filter usb_board_reset,$(USEMODULE)))
++  SRC += usb_reset.c
++endif
++
++include $(RIOTMAKE)/periph.mk
+diff --git a/cpu/rpx0xx/periph_common/Makefile.dep b/cpu/rpx0xx/periph_common/Makefile.dep
+new file mode 100644
+index 000000000000..7ed667a4f33f
+--- /dev/null
++++ b/cpu/rpx0xx/periph_common/Makefile.dep
+@@ -0,0 +1,9 @@
++# enable reset into the ROM bootloader via USB, requires CDC ACM to be used
++ifneq (,$(filter usbus_cdc_acm,$(USEMODULE)))
++  USEMODULE += usb_board_reset
++endif
++
++# the reset into the bootloader uses the ROM constants of the Pico SDK
++ifneq (,$(filter usb_board_reset,$(USEMODULE)))
++  USEPKG += picosdk
++endif
+diff --git a/cpu/rpx0xx/periph_common/Makefile.include b/cpu/rpx0xx/periph_common/Makefile.include
+new file mode 100644
+index 000000000000..2f70b203e7e4
+--- /dev/null
++++ b/cpu/rpx0xx/periph_common/Makefile.include
+@@ -0,0 +1,5 @@
++ifneq (,$(filter usb_board_reset,$(USEMODULE)))
++  include $(RIOTMAKE)/tools/usb_board_reset.mk
++  INCLUDES += -isystem$(PKGDIRBASE)/picosdk/src/rp2_common/boot_bootrom_headers/include
++  INCLUDES += -isystem$(PKGDIRBASE)/picosdk/src/common/boot_picoboot_headers/include
++endif
+diff --git a/cpu/rpx0xx/periph_common/usb_reset.c b/cpu/rpx0xx/periph_common/usb_reset.c
+new file mode 100644
+index 000000000000..6fcdffc7db82
+--- /dev/null
++++ b/cpu/rpx0xx/periph_common/usb_reset.c
+@@ -0,0 +1,89 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Example University
++ * SPDX-License-Identifier: LGPL-2.1-only
++ */
++
++/**
++ * @ingroup     cpu_rpx0xx
++ * @{
++ *
++ * @file
++ * @brief       Reset into the USB bootloader of the RP2040 and RP2350 boot ROM
++ *
++ * @author      D. Author
++ *
++ * @}
++ */
++
++#include <assert.h>
++#include <stdint.h>
++
++#include "cpu.h"
++#include "irq.h"
++#include "usb_board_reset.h"
++
++/* The ROM constants of the Pico SDK are used without the rest of the SDK */
++#define NO_PICO_PLATFORM    1
++#ifdef CPU_FAM_RP2350
++#  define PICO_RP2040       0
++#else
++#  define PICO_RP2040       1
++#endif
++#ifndef _u
++#  define _u(x)             x ## u
++#endif
++#include "boot/bootrom_constants.h"
++#if !PICO_RP2040
++#  include "boot/picoboot_constants.h"
++#endif
++
++static inline void *_rom_hword_as_ptr(uintptr_t addr)
++{
++    return (void *)(uintptr_t)*(volatile uint16_t *)addr;
++}
++
++#if PICO_RP2040
++typedef void *(*rom_table_lookup_fn)(uint16_t *table, uint32_t code);
++typedef void (*rom_reset_usb_boot_fn)(uint32_t gpio_activity_pin_mask,
++                                      uint32_t disable_interface_mask);
++
++void usb_board_reset_in_bootloader(void)
++{
++    rom_table_lookup_fn lookup = _rom_hword_as_ptr(BOOTROM_TABLE_LOOKUP_OFFSET);
++    rom_reset_usb_boot_fn reset_usb_boot =
++        lookup(_rom_hword_as_ptr(BOOTROM_FUNC_TABLE_OFFSET), ROM_FUNC_RESET_USB_BOOT);
++
++    irq_disable();
++    /* no activity LED, enable both the mass storage and the PICOBOOT
++     * interface */
++    reset_usb_boot(0, 0);
++    while (1) {}
++}
++#else
++typedef void *(*rom_table_lookup_fn)(uint32_t code, uint32_t mask);
++typedef int (*rom_reboot_fn)(uint32_t flags, uint32_t delay_ms,
++                             uint32_t p0, uint32_t p1);
++
++#ifdef RP2350_USE_RISCV
++/* on RISC-V, the lookup function is called via its entry in the table */
++#  define ROM_TABLE_LOOKUP  BOOTROM_TABLE_LOOKUP_ENTRY_OFFSET
++#  define ROM_FUNC_FLAGS    RT_FLAG_FUNC_RISCV
++#else
++/* RIOT runs in the secure state on the Arm cores */
++#  define ROM_TABLE_LOOKUP  BOOTROM_TABLE_LOOKUP_OFFSET
++#  define ROM_FUNC_FLAGS    RT_FLAG_FUNC_ARM_SEC
++#endif
++
++void usb_board_reset_in_bootloader(void)
++{
++    rom_table_lookup_fn lookup = _rom_hword_as_ptr(ROM_TABLE_LOOKUP);
++    rom_reboot_fn reboot = lookup(ROM_FUNC_REBOOT, ROM_FUNC_FLAGS);
++
++    irq_disable();
++    /* reboot into BOOTSEL mode after 10 ms, no activity LED, enable both
++     * the mass storage and the PICOBOOT interface */
++    reboot(REBOOT2_FLAG_REBOOT_TYPE_BOOTSEL | REBOOT2_FLAG_NO_RETURN_ON_SUCCESS,
++           10, 0, 0);
++    while (1) {}
++}
++#endif
+diff --git a/cpu/rpx0xx/periph_common/usbdev.c b/cpu/rpx0xx/periph_common/usbdev.c
+new file mode 100644
+index 000000000000..be7bcdf1fa28
+--- /dev/null
++++ b/cpu/rpx0xx/periph_common/usbdev.c
+@@ -0,0 +1,705 @@
++/*
++ * SPDX-FileCopyrightText: 2024 B. Author
++ * SPDX-License-Identifier: LGPL-2.1-only
++ */
++
++/**
++ * @ingroup     cpu_rpx0xx
++ * @{
++ *
++ * @file
++ * @brief       Low level USB device driver for the RP2040 and RP2350
++ *
++ * The USB controllers of the RP2040 and the RP2350 are identical. The
++ * register names of the RP2040 vendor header are used, the RP2350 maps them
++ * to the register names of the Pico SDK in `usbdev_regs.h`.
++ *
++ * The USB controller uses a 4 KiB dual port RAM (DPRAM) which
++ * contains the endpoint configuration, the buffer control registers and the
++ * data buffers. Setup packets are always written to the beginning of the
++ * DPRAM, independent of the state of the EP0 OUT buffer. They are passed to
++ * USBUS as regular transfer on EP0 OUT.
++ *
++ * All endpoints are used in single buffered mode. The data buffers of the
++ * endpoints are allocated in the DPRAM and data is copied between the DPRAM
++ * and the buffers provided by USBUS.
++ *
++ * @author      B. Author <noreply@example.invalid>
++ * @author      C. Author <noreply@example.invalid>
++ *
++ * @}
++ */
++
++#include <assert.h>
++#include <errno.h>
++#include <stdbool.h>
++#include <stdint.h>
++
++#include "bitarithm.h"
++#include "busy_wait.h"
++#include "container.h"
++#include "cpu.h"
++#include "irq.h"
++#include "periph/usbdev.h"
++#include "periph_cpu.h"
++
++#include "compat_layer.h"
++
++#include "regs/resets.h"
++#include "regs/usb.h"
++#include "regs/usb_device_dpram.h"
++
++#if defined(CPU_FAM_RP2040)
++#  include "RP2040.h"
++#elif defined(CPU_FAM_RP2350)
++#  include "RP2350.h"
++#endif
++
++#define ENABLE_DEBUG 0
++#include "debug.h"
++
++/**
++ * @brief   Size of the EP0 buffer, the controller uses a fixed buffer at
++ *          offset 0x100 for both EP0 IN and EP0 OUT
++ */
++#define EP0_BUF_SIZE            (64U)
++#define EP0_BUF_OFFSET          (0x100U)
++#define EP_BUF_ALIGN            (64U)
++#define DPRAM_BUF_START         (0x180U)
++#define DPRAM_SIZE              (0x1000U)
++
++#define SETUP_PACKET_LEN        (8U)
++
++#ifdef CPU_FAM_RP2040
++/**
++ * @name    Workaround for RP2040 erratum RP2040-E5
++ * @{
++ */
++#  define E5_DP_PIN             (15U)   /**< GPIO used to force the line state */
++#  define E5_FUNCSEL_USB_DEBUG  (8U)    /**< USB debug muxing function of GPIO15 */
++#  define E5_FORCE_J_US         (1000U) /**< Duration of the forced J state */
++#  define E5_AFFECTED_REVISION  (1U)    /**< Chip revision of RP2040-B0/B1 */
++/** @} */
++
++/**
++ * @name    Line states as reported in SIE_STATUS.LINE_STATE
++ * @{
++ */
++#  define LINE_STATE_SE0        (0U)
++#  define LINE_STATE_J          (1U)
++/** @} */
++#endif
++
++#define BUF_CTRL_FULL           USB_DEVICE_DPRAM_EP0_IN_BUFFER_CONTROL_FULL_0_BITS
++#define BUF_CTRL_PID            USB_DEVICE_DPRAM_EP0_IN_BUFFER_CONTROL_PID_0_BITS
++#define BUF_CTRL_STALL          USB_DEVICE_DPRAM_EP0_IN_BUFFER_CONTROL_STALL_BITS
++#define BUF_CTRL_AVAILABLE      USB_DEVICE_DPRAM_EP0_IN_BUFFER_CONTROL_AVAILABLE_0_BITS
++#define BUF_CTRL_LENGTH         USB_DEVICE_DPRAM_EP0_IN_BUFFER_CONTROL_LENGTH_0_BITS
++
++/**
++ * @brief   Interrupts handled on device level
++ */
++#define DEV_IRQS                (USB_INTS_BUS_RESET_BITS | \
++                                 USB_INTS_DEV_SUSPEND_BITS | \
++                                 USB_INTS_DEV_RESUME_FROM_HOST_BITS)
++
++typedef struct {
++    usbdev_ep_t ep;             /**< Generic endpoint struct, must be first */
++    uint8_t *dpram_buf;         /**< Endpoint buffer in the DPRAM */
++    uint8_t *buf;               /**< Buffer passed by the last xmit call */
++    size_t rx_len;              /**< Number of bytes received (OUT only) */
++    uint16_t dpram_offset;      /**< Offset of the buffer in the DPRAM */
++    bool next_pid;              /**< Data PID used for the next transfer */
++    volatile bool pending;      /**< Transfer completed, not yet serviced */
++} _rpx0xx_ep_t;
++
++typedef struct {
++    usbdev_t dev;                               /**< Generic usbdev struct, must be first */
++    _rpx0xx_ep_t eps[2 * USBDEV_NUM_ENDPOINTS]; /**< Endpoints */
++    uint16_t dpram_next;                        /**< Next free offset in the DPRAM */
++    volatile uint32_t events;                   /**< Device events not yet serviced */
++    volatile bool setup_pending;                /**< Setup packet not yet serviced */
++} _rpx0xx_usbdev_t;
++
++static const usbdev_driver_t _driver;
++static _rpx0xx_usbdev_t _usbdev;
++
++static inline uint8_t _ep_idx(uint8_t num, usb_ep_dir_t dir)
++{
++    /* same layout as the bits in BUFF_STATUS */
++    return 2 * num + ((dir == USB_EP_DIR_OUT) ? 1 : 0);
++}
++
++static inline _rpx0xx_ep_t *_get_ep(uint8_t num, usb_ep_dir_t dir)
++{
++    return &_usbdev.eps[_ep_idx(num, dir)];
++}
++
++static inline _rpx0xx_ep_t *_hw_ep(usbdev_ep_t *ep)
++{
++    return container_of(ep, _rpx0xx_ep_t, ep);
++}
++
++/* EPx_IN_CONTROL / EPx_OUT_CONTROL, only for endpoints 1 to 15 */
++static inline volatile uint32_t *_ep_ctrl(const usbdev_ep_t *ep)
++{
++    assert(ep->num > 0);
++    return &USB_DPRAM->EP1_IN_CONTROL + _ep_idx(ep->num - 1, ep->dir);
++}
++
++/* EPx_IN_BUFFER_CONTROL / EPx_OUT_BUFFER_CONTROL */
++static inline volatile uint32_t *_buf_ctrl(const usbdev_ep_t *ep)
++{
++    return &USB_DPRAM->EP0_IN_BUFFER_CONTROL + _ep_idx(ep->num, ep->dir);
++}
++
++static void _buf_arm(_rpx0xx_ep_t *hw_ep, size_t len)
++{
++    volatile uint32_t *reg = _buf_ctrl(&hw_ep->ep);
++    uint32_t val = len & BUF_CTRL_LENGTH;
++
++    if (hw_ep->ep.dir == USB_EP_DIR_IN) {
++        val |= BUF_CTRL_FULL;
++    }
++    /* the data PID is toggled once the transfer completed, an endpoint may
++     * be armed again without a completed transfer in between */
++    if (hw_ep->next_pid) {
++        val |= BUF_CTRL_PID;
++    }
++
++    /* The AVAILABLE bit must be set separately after the rest of the buffer
++     * control register has been written. The controller runs at 48 MHz while
++     * the CPU runs faster, so wait at least 3 clk_usb cycles in between
++     * (see RP2040 datasheet, section 4.1.2.5.1) */
++    *reg = val;
++    busy_wait(4);
++    *reg = val | BUF_CTRL_AVAILABLE;
++}
++
++/*
++ * The DPRAM is mapped as device memory, which does not allow unaligned
++ * accesses. memcpy() may use unaligned word accesses on cores that support
++ * them for normal memory (e.g. the Cortex-M33 of the RP2350), so the DPRAM is
++ * accessed byte wise.
++ */
++static void _dpram_write(uint8_t *dpram, const uint8_t *buf, size_t len)
++{
++    volatile uint8_t *dst = dpram;
++
++    for (size_t i = 0; i < len; i++) {
++        dst[i] = buf[i];
++    }
++}
++
++static void _dpram_read(uint8_t *buf, const uint8_t *dpram, size_t len)
++{
++    const volatile uint8_t *src = dpram;
++
++    for (size_t i = 0; i < len; i++) {
++        buf[i] = src[i];
++    }
++}
++
++static void _buf_disarm(_rpx0xx_ep_t *hw_ep)
++{
++    *_buf_ctrl(&hw_ep->ep) = 0;
++}
++
++void usbdev_init_lowlevel(void)
++{
++    _usbdev.dev.driver = &_driver;
++    _usbdev.dpram_next = DPRAM_BUF_START;
++}
++
++usbdev_t *usbdev_get_ctx(unsigned num)
++{
++    (void)num;
++    return &_usbdev.dev;
++}
++
++static void _init(usbdev_t *dev)
++{
++    (void)dev;
++    DEBUG("[rpx0xx usb] init\n");
++
++    atomic_set(&RESETS->RESET, RESETS_RESET_USBCTRL_BITS);
++    reset_component(RESETS_RESET_USBCTRL_BITS, RESETS_RESET_USBCTRL_BITS);
++
++    for (uint16_t i = 0; i < DPRAM_SIZE / sizeof(uint32_t); i++) {
++        ((volatile uint32_t *)USB_DPRAM)[i] = 0;
++    }
++
++    /* connect the controller to the internal PHY */
++    USB->USB_MUXING = USB_USB_MUXING_TO_PHY_BITS |
++                               USB_USB_MUXING_SOFTCON_BITS;
++    /* VBUS is not connected to the controller, pretend it is always there */
++    USB->USB_PWR = USB_USB_PWR_VBUS_DETECT_BITS |
++                            USB_USB_PWR_VBUS_DETECT_OVERRIDE_EN_BITS;
++    USB->MAIN_CTRL = USB_MAIN_CTRL_CONTROLLER_EN_BITS;
++    /* generate a buffer status interrupt for every EP0 buffer */
++    USB->SIE_CTRL = USB_SIE_CTRL_EP0_INT_1BUF_BITS;
++    USB->INTE = USB_INTE_BUFF_STATUS_BITS |
++                         USB_INTE_SETUP_REQ_BITS |
++                         DEV_IRQS;
++
++    NVIC_EnableIRQ(USBCTRL_IRQ_IRQn);
++}
++
++static int _get(usbdev_t *dev, usbopt_t opt, void *value, size_t max_len)
++{
++    (void)dev;
++    (void)max_len;
++
++    switch (opt) {
++    case USBOPT_MAX_VERSION:
++        assert(max_len == sizeof(usb_version_t));
++        *(usb_version_t *)value = USB_VERSION_20;
++        return sizeof(usb_version_t);
++    case USBOPT_MAX_SPEED:
++        assert(max_len == sizeof(usb_speed_t));
++        *(usb_speed_t *)value = USB_SPEED_FULL;
++        return sizeof(usb_speed_t);
++    default:
++        DEBUG("[rpx0xx usb] unhandled get call: 0x%x\n", opt);
++        return -ENOTSUP;
++    }
++}
++
++static int _set(usbdev_t *dev, usbopt_t opt, const void *value, size_t value_len)
++{
++    (void)dev;
++    (void)value_len;
++
++    switch (opt) {
++    case USBOPT_ADDRESS:
++        assert(value_len == sizeof(uint8_t));
++        USB->ADDR_ENDP = *(const uint8_t *)value &
++                                  USB_ADDR_ENDP_ADDRESS_BITS;
++        return sizeof(uint8_t);
++    case USBOPT_ATTACH:
++        assert(value_len == sizeof(usbopt_enable_t));
++        if (*(const usbopt_enable_t *)value) {
++            atomic_set(&USB->SIE_CTRL,
++                              USB_SIE_CTRL_PULLUP_EN_BITS);
++        }
++        else {
++            atomic_clear(&USB->SIE_CTRL,
++                                USB_SIE_CTRL_PULLUP_EN_BITS);
++        }
++        return sizeof(usbopt_enable_t);
++    default:
++        DEBUG("[rpx0xx usb] unhandled set call: 0x%x\n", opt);
++        return -ENOTSUP;
++    }
++}
++
++static usbdev_ep_t *_new_ep(usbdev_t *dev, usb_ep_type_t type,
++                            usb_ep_dir_t dir, size_t size)
++{
++    _rpx0xx_ep_t *hw_ep = NULL;
++
++    DEBUG("[rpx0xx usb] new_ep: type=%u dir=%u size=%u\n",
++          (unsigned)type, (unsigned)dir, (unsigned)size);
++
++    if (type == USB_EP_TYPE_CONTROL) {
++        hw_ep = _get_ep(0, dir);
++        if ((hw_ep->ep.type != USB_EP_TYPE_NONE) || (size > EP0_BUF_SIZE)) {
++            return NULL;
++        }
++        hw_ep->ep.num = 0;
++        hw_ep->dpram_offset = EP0_BUF_OFFSET;
++    }
++    else {
++        /* buffers in the DPRAM must be 64 byte aligned */
++        size_t alloc = (size + EP_BUF_ALIGN - 1) & ~(EP_BUF_ALIGN - 1);
++
++        if (_usbdev.dpram_next + alloc > DPRAM_SIZE) {
++            return NULL;
++        }
++        for (uint8_t num = 1; num < USBDEV_NUM_ENDPOINTS; num++) {
++            if (_get_ep(num, dir)->ep.type == USB_EP_TYPE_NONE) {
++                hw_ep = _get_ep(num, dir);
++                hw_ep->ep.num = num;
++                break;
++            }
++        }
++        if (hw_ep == NULL) {
++            return NULL;
++        }
++        hw_ep->dpram_offset = _usbdev.dpram_next;
++        _usbdev.dpram_next += alloc;
++    }
++
++    hw_ep->dpram_buf = (uint8_t *)USB_DPRAM + hw_ep->dpram_offset;
++    hw_ep->ep.dev = dev;
++    hw_ep->ep.dir = dir;
++    hw_ep->ep.type = type;
++    hw_ep->ep.len = size;
++
++    return &hw_ep->ep;
++}
++
++static void _ep0_stall(usbdev_t *dev)
++{
++    (void)dev;
++    /* EP_STALL_ARM is cleared automatically on the next setup packet */
++    atomic_set(&USB->EP_STALL_ARM,
++                      USB_EP_STALL_ARM_EP0_IN_BITS |
++                      USB_EP_STALL_ARM_EP0_OUT_BITS);
++    *_buf_ctrl(&_get_ep(0, USB_EP_DIR_IN)->ep) = BUF_CTRL_STALL;
++    *_buf_ctrl(&_get_ep(0, USB_EP_DIR_OUT)->ep) = BUF_CTRL_STALL;
++}
++
++static void _ep_stall(usbdev_ep_t *ep, bool enable)
++{
++    _rpx0xx_ep_t *hw_ep = _hw_ep(ep);
++
++    if (ep->num == 0) {
++        uint32_t mask = (ep->dir == USB_EP_DIR_IN)
++                      ? USB_EP_STALL_ARM_EP0_IN_BITS
++                      : USB_EP_STALL_ARM_EP0_OUT_BITS;
++        if (enable) {
++            atomic_set(&USB->EP_STALL_ARM, mask);
++        }
++        else {
++            atomic_clear(&USB->EP_STALL_ARM, mask);
++        }
++    }
++    if (enable) {
++        *_buf_ctrl(ep) = BUF_CTRL_STALL;
++    }
++    else {
++        _buf_disarm(hw_ep);
++        /* clearing the halt feature resets the data toggle */
++        hw_ep->next_pid = 0;
++    }
++}
++
++static void _ep_init(usbdev_ep_t *ep)
++{
++    _rpx0xx_ep_t *hw_ep = _hw_ep(ep);
++
++    DEBUG("[rpx0xx usb] ep_init: EP%u %s\n", ep->num,
++          (ep->dir == USB_EP_DIR_IN) ? "IN" : "OUT");
++
++    hw_ep->buf = NULL;
++    hw_ep->rx_len = 0;
++    hw_ep->pending = false;
++    /* data stage of control transfers always starts with DATA1 */
++    hw_ep->next_pid = (ep->num == 0);
++    _buf_disarm(hw_ep);
++}
++
++static void _ep_enable(usbdev_ep_t *ep, bool enable)
++{
++    if (ep->num == 0) {
++        /* EP0 is always enabled */
++        return;
++    }
++
++    if (enable) {
++        static const uint8_t ep_types[] = {
++            [USB_EP_TYPE_CONTROL] = USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENDPOINT_TYPE_VALUE_CONTROL,
++            [USB_EP_TYPE_INTERRUPT] = USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENDPOINT_TYPE_VALUE_INTERRUPT,
++            [USB_EP_TYPE_BULK] = USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENDPOINT_TYPE_VALUE_BULK,
++            [USB_EP_TYPE_ISOCHRONOUS] = USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENDPOINT_TYPE_VALUE_ISOCHRONOUS,
++        };
++        *_ep_ctrl(ep) = USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENABLE_BITS |
++                        USB_DEVICE_DPRAM_EP1_IN_CONTROL_INTERRUPT_PER_BUFF_BITS |
++                        (ep_types[ep->type] << USB_DEVICE_DPRAM_EP1_IN_CONTROL_ENDPOINT_TYPE_LSB) |
++                        _hw_ep(ep)->dpram_offset;
++    }
++    else {
++        _buf_disarm(_hw_ep(ep));
++        *_ep_ctrl(ep) = 0;
++    }
++}
++
++static int _ep_get(usbdev_ep_t *ep, usbopt_ep_t opt, void *value, size_t max_len)
++{
++    (void)max_len;
++
++    switch (opt) {
++    case USBOPT_EP_STALL:
++        assert(max_len == sizeof(usbopt_enable_t));
++        *(usbopt_enable_t *)value = (*_buf_ctrl(ep) & BUF_CTRL_STALL)
++                                  ? USBOPT_ENABLE : USBOPT_DISABLE;
++        return sizeof(usbopt_enable_t);
++    case USBOPT_EP_AVAILABLE:
++        assert(max_len == sizeof(size_t));
++        *(size_t *)value = _hw_ep(ep)->rx_len;
++        return sizeof(size_t);
++    default:
++        DEBUG("[rpx0xx usb] unhandled ep get call: 0x%x\n", opt);
++        return -ENOTSUP;
++    }
++}
++
++static int _ep_set(usbdev_ep_t *ep, usbopt_ep_t opt,
++                   const void *value, size_t value_len)
++{
++    (void)value_len;
++
++    switch (opt) {
++    case USBOPT_EP_ENABLE:
++        assert(value_len == sizeof(usbopt_enable_t));
++        _ep_enable(ep, *(const usbopt_enable_t *)value);
++        return sizeof(usbopt_enable_t);
++    case USBOPT_EP_STALL:
++        assert(value_len == sizeof(usbopt_enable_t));
++        _ep_stall(ep, *(const usbopt_enable_t *)value);
++        return sizeof(usbopt_enable_t);
++    default:
++        DEBUG("[rpx0xx usb] unhandled ep set call: 0x%x\n", opt);
++        return -ENOTSUP;
++    }
++}
++
++static int _xmit(usbdev_ep_t *ep, uint8_t *buf, size_t len)
++{
++    _rpx0xx_ep_t *hw_ep = _hw_ep(ep);
++
++    assert(len <= ep->len);
++
++    hw_ep->buf = buf;
++    hw_ep->rx_len = 0;
++
++    if (ep->dir == USB_EP_DIR_IN) {
++        _dpram_write(hw_ep->dpram_buf, buf, len);
++    }
++    _buf_arm(hw_ep, len);
++
++    return 0;
++}
++
++static void _bus_reset(void)
++{
++    /* disarm all buffers and disable all endpoints except EP0, they are
++     * enabled again by USBUS once the device is configured */
++    for (uint8_t idx = 0; idx < ARRAY_SIZE(_usbdev.eps); idx++) {
++        (&USB_DPRAM->EP0_IN_BUFFER_CONTROL)[idx] = 0;
++        if (idx >= 2) {
++            (&USB_DPRAM->EP1_IN_CONTROL)[idx - 2] = 0;
++        }
++        _usbdev.eps[idx].pending = false;
++    }
++    _usbdev.setup_pending = false;
++}
++
++#ifdef CPU_FAM_RP2040
++static uint32_t _line_state(void)
++{
++    return (USB->SIE_STATUS & USB_SIE_STATUS_LINE_STATE_Msk) >>
++           USB_SIE_STATUS_LINE_STATE_Pos;
++}
++
++/*
++ * Workaround for erratum RP2040-E5 "USB device fails to exit RESET state on
++ * busy USB bus", taken from the Pico SDK (rp2040_usb_device_enumeration.c).
++ *
++ * After a bus reset, the controller expects 800 us of J state before it
++ * considers the device connected. On a hub that forwards packets of other
++ * devices this may never happen. Therefore the J state is forced for 1 ms by
++ * temporarily routing the USB input path through GPIO15.
++ *
++ * The workaround busy waits until the bus reset is over, which takes up to
++ * 15 ms, and modifies the configuration of GPIO15 in the meantime.
++ */
++static void _enumeration_fix(void)
++{
++    if (((SYSINFO->CHIP_ID & SYSINFO_CHIP_ID_REVISION_Msk) >>
++         SYSINFO_CHIP_ID_REVISION_Pos) != E5_AFFECTED_REVISION) {
++        /* fixed in RP2040-B2 */
++        return;
++    }
++    if (!(USB->SIE_CTRL & USB_SIE_CTRL_PULLUP_EN_Msk)) {
++        /* not attached to the host */
++        return;
++    }
++
++    DEBUG("[rpx0xx usb] applying workaround for RP2040-E5\n");
++
++    /* wait for the end of the bus reset */
++    while (_line_state() == LINE_STATE_SE0) {}
++
++    uint32_t io_prev = *gpio_io_register(E5_DP_PIN);
++    uint32_t pad_prev = *gpio_pad_register(E5_DP_PIN);
++
++    /* enable the bus keeper and tristate the pin so that the USB muxing does
++     * not affect the pin state */
++    atomic_set(gpio_pad_register(E5_DP_PIN),
++                      PADS_BANK0_GPIO0_PUE_Msk | PADS_BANK0_GPIO0_PDE_Msk);
++    io_reg_write_dont_corrupt(gpio_io_register(E5_DP_PIN),
++                              OUTPUT_ENABLE_OVERRIDE_DISABLE << IO_BANK0_GPIO0_CTRL_OEOVER_Pos,
++                              IO_BANK0_GPIO0_CTRL_OEOVER_Msk);
++    io_reg_write_dont_corrupt(gpio_io_register(E5_DP_PIN),
++                              E5_FUNCSEL_USB_DEBUG << IO_BANK0_GPIO0_CTRL_FUNCSEL_Pos,
++                              IO_BANK0_GPIO0_CTRL_FUNCSEL_Msk);
++    /* J state is DP = 1 and DM = 0 for a full speed device, DM is already
++     * gated as long as GPIO16 is not set to the USB debug function */
++    io_reg_write_dont_corrupt(gpio_io_register(E5_DP_PIN),
++                              INPUT_OVERRIDE_HIGH << IO_BANK0_GPIO0_CTRL_INOVER_Pos,
++                              IO_BANK0_GPIO0_CTRL_INOVER_Msk);
++
++    /* keep the DP pull-up enabled while the PHY is not used */
++    atomic_set(&USB->USBPHY_DIRECT,
++                      USB_USBPHY_DIRECT_DP_PULLUP_EN_Msk);
++    atomic_set(&USB->USBPHY_DIRECT_OVERRIDE,
++                      USB_USBPHY_DIRECT_OVERRIDE_DP_PULLUP_EN_OVERRIDE_EN_Msk);
++
++    /* switch to the GPIO PHY with J state forced */
++    USB->USB_MUXING = USB_USB_MUXING_TO_DIGITAL_PAD_Msk |
++                               USB_USB_MUXING_SOFTCON_Msk;
++    assert(_line_state() == LINE_STATE_J);
++
++    busy_wait_us(E5_FORCE_J_US);
++    while (!(USB->SIE_STATUS & USB_SIE_STATUS_CONNECTED_Msk)) {}
++
++    /* switch back to the USB PHY and restore GPIO15 */
++    USB->USB_MUXING = USB_USB_MUXING_TO_PHY_Msk |
++                               USB_USB_MUXING_SOFTCON_Msk;
++    atomic_clear(&USB->USBPHY_DIRECT_OVERRIDE,
++                        USB_USBPHY_DIRECT_OVERRIDE_DP_PULLUP_EN_OVERRIDE_EN_Msk);
++    *gpio_io_register(E5_DP_PIN) = io_prev;
++    *gpio_pad_register(E5_DP_PIN) = pad_prev;
++}
++#else
++static inline void _enumeration_fix(void)
++{
++    /* RP2040-E5 does not affect the RP2350 */
++}
++#endif
++
++static void _esr(usbdev_t *dev)
++{
++    unsigned state = irq_disable();
++    uint32_t events = _usbdev.events;
++    _usbdev.events = 0;
++    irq_restore(state);
++
++    if (events & USB_INTS_BUS_RESET_BITS) {
++        DEBUG("[rpx0xx usb] bus reset\n");
++        _bus_reset();
++        _enumeration_fix();
++        dev->cb(dev, USBDEV_EVENT_RESET);
++    }
++    if (events & USB_INTS_DEV_SUSPEND_BITS) {
++        dev->cb(dev, USBDEV_EVENT_SUSPEND);
++    }
++    if (events & USB_INTS_DEV_RESUME_FROM_HOST_BITS) {
++        dev->cb(dev, USBDEV_EVENT_RESUME);
++    }
++}
++
++static void _setup_complete(void)
++{
++    _rpx0xx_ep_t *ep0_in = _get_ep(0, USB_EP_DIR_IN);
++    _rpx0xx_ep_t *ep0_out = _get_ep(0, USB_EP_DIR_OUT);
++
++    /* A setup packet aborts any ongoing control transfer, the data stage
++     * of the new control transfer starts with DATA1 */
++    _buf_disarm(ep0_in);
++    _buf_disarm(ep0_out);
++    ep0_in->next_pid = 1;
++    ep0_out->next_pid = 1;
++    ep0_in->pending = false;
++
++    if (ep0_out->buf) {
++        _dpram_read(ep0_out->buf, (uint8_t *)USB_DPRAM, SETUP_PACKET_LEN);
++    }
++    ep0_out->rx_len = SETUP_PACKET_LEN;
++    _usbdev.dev.epcb(&ep0_out->ep, USBDEV_EVENT_TR_COMPLETE);
++}
++
++static void _ep_esr(usbdev_ep_t *ep)
++{
++    _rpx0xx_ep_t *hw_ep = _hw_ep(ep);
++
++    unsigned state = irq_disable();
++    bool pending = hw_ep->pending;
++    hw_ep->pending = false;
++    irq_restore(state);
++
++    if (pending) {
++        hw_ep->next_pid = !hw_ep->next_pid;
++        if (ep->dir == USB_EP_DIR_OUT) {
++            size_t len = *_buf_ctrl(ep) & BUF_CTRL_LENGTH;
++            if (hw_ep->buf) {
++                _dpram_read(hw_ep->buf, hw_ep->dpram_buf, len);
++            }
++            hw_ep->rx_len = len;
++        }
++        _usbdev.dev.epcb(ep, USBDEV_EVENT_TR_COMPLETE);
++    }
++
++    /* the setup packet has to be handled after a pending transfer on EP0,
++     * as it was received after that transfer had been completed */
++    if ((ep->num == 0) && (ep->dir == USB_EP_DIR_OUT)) {
++        state = irq_disable();
++        bool setup = _usbdev.setup_pending;
++        _usbdev.setup_pending = false;
++        irq_restore(state);
++
++        if (setup) {
++            _setup_complete();
++        }
++    }
++}
++
++void isr_usbctrl(void)
++{
++    uint32_t ints = USB->INTS;
++
++    if (ints & USB_INTS_SETUP_REQ_BITS) {
++        /* SIE_STATUS bits are write 1 to clear */
++        USB->SIE_STATUS = USB_SIE_STATUS_SETUP_REC_BITS;
++        _usbdev.setup_pending = true;
++        _usbdev.dev.epcb(&_get_ep(0, USB_EP_DIR_OUT)->ep, USBDEV_EVENT_ESR);
++    }
++
++    if (ints & USB_INTS_BUFF_STATUS_BITS) {
++        uint32_t status = USB->BUFF_STATUS;
++        /* BUFF_STATUS bits are write 1 to clear */
++        USB->BUFF_STATUS = status;
++        while (status) {
++            uint8_t idx = 0;
++            status = bitarithm_test_and_clear(status, &idx);
++            _usbdev.eps[idx].pending = true;
++            _usbdev.dev.epcb(&_usbdev.eps[idx].ep, USBDEV_EVENT_ESR);
++        }
++    }
++
++    if (ints & DEV_IRQS) {
++        uint32_t clear = 0;
++        if (ints & USB_INTS_BUS_RESET_BITS) {
++            clear |= USB_SIE_STATUS_BUS_RESET_BITS;
++            USB->ADDR_ENDP = 0;
++        }
++        if (ints & USB_INTS_DEV_SUSPEND_BITS) {
++            clear |= USB_SIE_STATUS_SUSPENDED_BITS;
++        }
++        if (ints & USB_INTS_DEV_RESUME_FROM_HOST_BITS) {
++            clear |= USB_SIE_STATUS_RESUME_BITS;
++        }
++        USB->SIE_STATUS = clear;
++        _usbdev.events |= ints & DEV_IRQS;
++        _usbdev.dev.cb(&_usbdev.dev, USBDEV_EVENT_ESR);
++    }
++
++    cortexm_isr_end();
++}
++
++static const usbdev_driver_t _driver = {
++    .init = _init,
++    .new_ep = _new_ep,
++    .get = _get,
++    .set = _set,
++    .esr = _esr,
++    .ep0_stall = _ep0_stall,
++    .ep_init = _ep_init,
++    .ep_stall = _ep_stall,
++    .ep_get = _ep_get,
++    .ep_set = _ep_set,
++    .ep_esr = _ep_esr,
++    .xmit = _xmit,
++};
+diff --git a/examples/advanced/usb_printf/Makefile b/examples/advanced/usb_printf/Makefile
+new file mode 100644
+index 000000000000..6ddab9f70a51
+--- /dev/null
++++ b/examples/advanced/usb_printf/Makefile
+@@ -0,0 +1,25 @@
++# name of your application
++APPLICATION = usb_printf
++
++# This example targets the RP2350 (Arm). Any board providing periph_usbdev works.
++BOARD ?= rpi-pico-2-arm
++
++# This has to be the absolute path to the RIOT base directory:
++RIOTBASE ?= $(CURDIR)/../../..
++
++# Comment this out to disable code in RIOT that does safety checking
++# which is not needed in a production environment but helps in the
++# development process:
++DEVELHELP ?= 1
++
++# Use the USB CDC ACM interface as stdio (stdout/stderr)
++USEMODULE += stdio_cdc_acm
++
++# USB device vendor and product ID (testing IDs, do not redistribute)
++USB_VID ?= $(USB_VID_TESTING)
++USB_PID ?= $(USB_PID_TESTING)
++
++# Change this to 0 show compiler invocation lines by default:
++QUIET ?= 1
++
++include $(RIOTBASE)/Makefile.include
+diff --git a/examples/advanced/usb_printf/README.md b/examples/advanced/usb_printf/README.md
+new file mode 100644
+index 000000000000..6a03cac3b485
+--- /dev/null
++++ b/examples/advanced/usb_printf/README.md
+@@ -0,0 +1,26 @@
++# usb_printf example
++
++This example uses the USB CDC ACM interface as stdio, so `printf()`/`puts()`
++output is sent over USB. It prints a message once per second without requiring a
++timer periph to be available.
++
++## Usage
++
++Build and flash (put the board into BOOTSEL mode first if needed):
++
++```shell
++make BOARD=rpi-pico-2-arm flash
++```
++
++Then open the USB CDC ACM interface:
++
++```shell
++make BOARD=rpi-pico-2-arm term
++```
++
++The output should appear on `/dev/ttyACM0`.
++
++## Notes
++
++- `USB_VID`/`USB_PID` default to the RIOT testing IDs (`1209`/`7d01`). They must
++  not be used on redistributed devices.
+diff --git a/examples/advanced/usb_printf/main.c b/examples/advanced/usb_printf/main.c
+new file mode 100644
+index 000000000000..d2ad93b13481
+--- /dev/null
++++ b/examples/advanced/usb_printf/main.c
+@@ -0,0 +1,28 @@
++/*
++ * SPDX-FileCopyrightText: 2026 Example College
++ * SPDX-License-Identifier: LGPL-2.1-only
++ */
++
++/**
++ * @ingroup     examples
++ * @{
++ *
++ * @file
++ * @brief       Print over USB CDC ACM
++ *
++ * @}
++ */
++
++#include <stdio.h>
++
++#include "busy_wait.h"
++
++int main(void)
++{
++    while (1) {
++        puts("Hello from the RP2350 over USB CDC ACM!");
++        busy_wait(1000000); /* ~1 s */
++    }
++
++    return 0;
++}
+diff --git a/makefiles/application.inc.mk b/makefiles/application.inc.mk
+index f5808e8eb6ef..19741b1c13a3 100644
+--- a/makefiles/application.inc.mk
++++ b/makefiles/application.inc.mk
+@@ -2,6 +2,7 @@ MODULE = $(APPLICATION_MODULE)
+ 
+ DIRS += $(RIOTCPU)/$(CPU) $(BOARDDIR)
+ DIRS += $(RIOTBASE)/boards
++DIRS += $(RIOTBASE)/cpu
+ DIRS += $(RIOTBASE)/core $(RIOTBASE)/core/lib $(RIOTBASE)/drivers $(RIOTBASE)/sys
+ 
+ # For regular modules, adding files to BLOBS, SRC, SRCXX, ASMSRC or ASSMSRC
+diff --git a/makefiles/dependency_resolution.inc.mk b/makefiles/dependency_resolution.inc.mk
+index 199c325b0cde..f47a8852c1ad 100644
+--- a/makefiles/dependency_resolution.inc.mk
++++ b/makefiles/dependency_resolution.inc.mk
+@@ -21,6 +21,9 @@ include $(RIOTBASE)/Makefile.dep
+ # on the USEMODULE, which is present after the `Makefile.dep` resolution
+ include $(RIOTBOARD)/Makefile.features
+ 
++# include the global cpu features for the same reason
++include $(RIOTCPU)/Makefile.features
++
+ # check if required features are provided and update $(FEATURES_USED)
+ include $(RIOTMAKE)/features_check.inc.mk
+ 
