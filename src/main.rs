@@ -1,5 +1,6 @@
 //! ghdiff — a local terminal viewer for GitHub pull requests.
 
+mod app;
 mod editor;
 mod github;
 mod model;
