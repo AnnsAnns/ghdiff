@@ -4,27 +4,7 @@ A local terminal viewer for GitHub pull requests.
 It aims to feel like the GitHub "Files changed"
 tab without leaving your terminal.
 
-```
-┌ ghdiff ───────────────────────────────────────────────────────────────────────────┐
-│#22910 cpu/rpxxxx: add usbdev support                                              │
-└───────────────────────────────────────────────────────────────────────────────────┘
-┌ 33 changed files ──────────────────────────┐ M makefiles/application.inc.mk +1 -0  │
-│  M Makefile.dep                       +2 -1│▸        @@ -2,6 +2,7 @@ MODULE = ... │
-│  M Makefile.include                   +3 -0│  2   2                                 │
-│  A cpu/Makefile                       +6 -0│  3   3  DIRS += $(RIOTCPU)/$(CPU) ...  │
-│  A cpu/Makefile.dep                   +4 -0│  4   4  DIRS += $(RIOTBASE)/boards     │
-│  A cpu/Makefile.features              +1 -0│●     5+ DIRS += $(RIOTBASE)/cpu        │
-│  M cpu/rp2350_common/clock.c         +28 -0│         ╭─ @reviewer-a · 2026-10-17      │
-│  A cpu/rpx0xx/include/compat_layer.h +89 -0│         │ 🤨  Whats happening here      │
-│  A cpu/rpx0xx/periph_common/usb_… ●1 +89 -0│         ╰─                             │
-│▸ M makefiles/application.inc.mk ●1    +1 -0│  5   6  DIRS += $(RIOTBASE)/core ...    │
-└────────────────────────────────────────────┘                                       │
- Tab focus · j/k move · c comment · r reply · t resolved · [ ] file · q quit         │
-```
-
-(The real thing is colourised: syntax-highlighted code, green/red added and
-removed rows, and purple thread markers in the gutter. A full-size snapshot is
-in [`docs/layout.txt`](docs/layout.txt).)
+![Screenshot of ghdiff showing a pull request diff with comments](./docs/showcase.png)
 
 ## Features
 
@@ -231,6 +211,9 @@ palette from there:
 - accent colours use the terminal's ANSI palette;
 - the added/removed tints are blended from the detected background, so they
   stay subtle on both light and dark themes;
+- popups (the comment/suggestion editor, the review composer, the checkout
+  dialog and help) get a slightly lifted background so their text boxes stand
+  out from the diff behind them;
 - the syntax-highlighting theme switches between `InspiredGitHub` (light) and
   `base16-ocean.dark` (dark).
 

@@ -684,6 +684,7 @@ fn draw_draft(frame: &mut Frame, app: &App, draft: &crate::app::Draft) {
 
     frame.render_widget(Clear, rect);
     let block = Block::bordered()
+        .style(Style::default().bg(theme::t().popup_bg))
         .border_style(Style::default().fg(border))
         .title(Span::styled(
             title,
@@ -735,6 +736,7 @@ fn draw_review(frame: &mut Frame, review: &crate::app::ReviewDraft, pending: usi
         " submit review ".to_string()
     };
     let block = Block::bordered()
+        .style(Style::default().bg(theme::t().popup_bg))
         .border_style(Style::default().fg(theme::t().accent))
         .title(Span::styled(
             title,
@@ -871,6 +873,7 @@ fn draw_checkout(frame: &mut Frame, app: &App, prompt: &crate::app::CheckoutProm
     frame.render_widget(Clear, rect);
 
     let block = Block::bordered()
+        .style(Style::default().bg(theme::t().popup_bg))
         .border_style(Style::default().fg(theme::t().accent))
         .title(Span::styled(
             format!(" check out pull request #{number} "),
@@ -901,6 +904,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
         crate::termbg::Mode::Light => "light",
     };
     let block = Block::bordered()
+        .style(Style::default().bg(theme::t().popup_bg))
         .border_style(Style::default().fg(theme::t().accent))
         .title(Span::styled(
             format!(" help · {mode} theme "),

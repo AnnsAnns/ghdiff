@@ -670,6 +670,23 @@ fn light_and_dark_themes_have_matching_tints() {
     assert!(matches!(light.hunk_bg, Color::Rgb(..)));
     assert!(matches!(dark.hunk_bg, Color::Rgb(..)));
     assert_ne!(light.hunk_fg, dark.hunk_fg);
+
+    // Popups get a subtle lift that differs from both the base background and
+    // the hunk band, in either mode.
+    for theme in [&light, &dark] {
+        assert!(matches!(theme.popup_bg, Color::Rgb(..)));
+        assert_ne!(theme.popup_bg, theme.hunk_bg);
+    }
+    assert!(
+        luma(dark.popup_bg) > 25.0 && luma(dark.popup_bg) < 80.0,
+        "dark popup: {:?}",
+        dark.popup_bg
+    );
+    assert!(
+        luma(light.popup_bg) > 180.0 && luma(light.popup_bg) < 250.0,
+        "light popup: {:?}",
+        light.popup_bg
+    );
 }
 
 #[test]

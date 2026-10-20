@@ -25,6 +25,8 @@ pub struct Theme {
     pub border: Color,
     pub bg: Color,
     pub panel_bg: Color,
+    /// Raised background for popups (editors, review composer, dialogs).
+    pub popup_bg: Color,
 
     // Accents (ANSI, so they follow the terminal palette).
     pub accent: Color,
@@ -88,6 +90,9 @@ impl Theme {
         let hunk = blend(base, contrast, 0.18);
         let cursor = blend(base, contrast, 0.11);
         let selection = blend(base, ACCENT_RGB, 0.26);
+        // Popups float above the diff; a small lift keeps their text boxes
+        // distinct from the tinted rows behind them.
+        let popup = blend(base, contrast, 0.08);
 
         let (dim, faint, border) = match mode {
             Mode::Dark => (
@@ -114,6 +119,7 @@ impl Theme {
             border,
             bg: Color::Reset,
             panel_bg: rgb(hunk),
+            popup_bg: rgb(popup),
             accent: Color::Blue,
             green: Color::Green,
             red: Color::Red,
