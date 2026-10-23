@@ -103,6 +103,7 @@ ghdiff
 | `Enter`            | open the selected file (in the file list)       |
 | `c`                | comment on the current line (or the selected range) |
 | `s`                | suggest a code change for the line / selection  |
+| `i`                | edit the draft comment under the cursor         |
 | `d`                | discard the draft comment under the cursor      |
 | `v` / `V`          | start a range selection, then `c` to comment on it |
 | `r`                | reply to the thread under the cursor            |
@@ -175,7 +176,8 @@ all add **drafts**:
   and marked with a `●` in the gutter;
 - the header shows how many drafts are pending (e.g. `· 2 draft comments`), and
   the review composer repeats the count in its title;
-- `d` on a draft discards it.
+- `i` on a draft reopens it in the composer (a suggestion is edited as bare
+  replacement code) and `d` discards the draft under the cursor.
 
 Press `S` to open the review composer. Write a summary, use `Tab` to switch the
 verdict between **Comment**, **Approve** and **Request changes**, then `Ctrl+S`

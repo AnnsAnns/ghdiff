@@ -1120,6 +1120,150 @@ fn a_draft_can_be_discarded() {
 }
 
 #[test]
+fn a_draft_can_be_edited() {
+    let mut app = fixture_app();
+    select_and_render(&mut app, "cpu/rpx0xx/periph_common/usb_reset.c", 140, 40);
+    app.view.cursor = 1;
+    press(&mut app, 'c');
+    for c in "needs work".chars() {
+        press(&mut app, c);
+    }
+    press_ctrl(&mut app, 's');
+    assert_eq!(app.pending_count(), 1);
+    let threads_before = app.threads.len();
+
+    // Saving the draft jumped the cursor onto it; `i` reopens it pre-filled.
+    press(&mut app, 'i');
+    match app.draft.as_ref().map(|d| &d.target) {
+        Some(DraftTarget::Edit {
+            suggestion: false, ..
+        }) => {}
+        other => panic!("expected an edit draft, got {other:?}"),
+    }
+    assert_eq!(app.draft.as_ref().unwrap().editor.text(), "needs work");
+
+    let screen = render(&mut app, 140, 40);
+    assert!(screen.contains("edit comment"), "\n{screen}");
+
+    for c in " here".chars() {
+        press(&mut app, c);
+    }
+    press_ctrl(&mut app, 's');
+    assert!(app.draft.is_none());
+    assert_eq!(app.pending_count(), 1, "editing must not add a draft");
+    assert_eq!(app.threads.len(), threads_before, "no new thread");
+    let thread = app
+        .threads
+        .iter()
+        .find(|t| t.id.starts_with("draft-"))
+        .expect("draft thread");
+    assert_eq!(thread.comments[0].body, "needs work here");
+}
+
+#[test]
+fn editing_a_suggestion_keeps_the_fence() {
+    let mut app = fixture_app();
+    select_and_render(&mut app, "cpu/rpx0xx/periph_common/usb_reset.c", 140, 40);
+    app.view.cursor = 1;
+    press(&mut app, 's');
+    press_ctrl(&mut app, 's');
+    assert_eq!(app.pending_count(), 1);
+
+    // The editor holds the bare replacement code, not the fence.
+    press(&mut app, 'i');
+    match app.draft.as_ref().map(|d| &d.target) {
+        Some(DraftTarget::Edit {
+            suggestion: true, ..
+        }) => {}
+        other => panic!("expected a suggestion edit, got {other:?}"),
+    }
+    assert_eq!(app.draft.as_ref().unwrap().editor.text(), "/*");
+
+    for c in "* header".chars() {
+        press(&mut app, c);
+    }
+    press_ctrl(&mut app, 's');
+    let thread = app
+        .threads
+        .iter()
+        .find(|t| t.id.starts_with("draft-"))
+        .expect("draft thread");
+    assert_eq!(
+        thread.comments[0].body,
+        crate::app::suggestion_body("/** header")
+    );
+}
+
+#[test]
+fn suggestion_code_unwraps_the_fence() {
+    let body = crate::app::suggestion_body("let x = 1;");
+    assert_eq!(crate::app::suggestion_code(&body), Some("let x = 1;"));
+    assert_eq!(crate::app::suggestion_code("plain text"), None);
+}
+
+#[test]
+fn editing_a_published_comment_is_refused() {
+    let mut app = fixture_app();
+    select_and_render(&mut app, "cpu/rpx0xx/periph_common/usb_reset.c", 140, 40);
+    let row = app
+        .view
+        .meta
+        .iter()
+        .position(|m| matches!(m, LineMeta::Comment { .. }))
+        .expect("a thread row");
+    app.view.cursor = row;
+
+    press(&mut app, 'i');
+    assert!(app.draft.is_none());
+    assert!(app.status.contains("Only draft"), "{}", app.status);
+
+    press(&mut app, 'd');
+    assert!(app.status.contains("Only draft"), "{}", app.status);
+}
+
+#[test]
+fn discarding_a_reply_removes_the_one_under_the_cursor() {
+    let mut app = fixture_app();
+    select_and_render(&mut app, "cpu/rpx0xx/periph_common/usb_reset.c", 140, 40);
+    let row = app
+        .view
+        .meta
+        .iter()
+        .position(|m| matches!(m, LineMeta::Comment { .. }))
+        .expect("a thread row");
+    app.view.cursor = row;
+
+    for body in ["first", "second"] {
+        press(&mut app, 'r');
+        for c in body.chars() {
+            press(&mut app, c);
+        }
+        press_ctrl(&mut app, 's');
+    }
+    assert_eq!(app.pending_count(), 2);
+
+    // Discard the first of the two pending replies.
+    let row = app
+        .view
+        .meta
+        .iter()
+        .position(|m| matches!(m, LineMeta::Comment { comment: 1, .. }))
+        .expect("the first reply row");
+    app.view.cursor = row;
+    press(&mut app, 'd');
+
+    assert_eq!(app.pending_count(), 1);
+    let thread = app
+        .threads
+        .iter()
+        .find(|t| t.comments.iter().any(|c| c.pending))
+        .expect("the thread with the remaining reply");
+    assert!(thread.comments.iter().all(|c| c.body != "first"));
+    assert!(thread.comments.iter().any(|c| c.body == "second"));
+    assert!(app.status.contains("discarded"), "{}", app.status);
+}
+
+#[test]
 fn replies_are_buffered_as_drafts() {
     let mut app = fixture_app();
     // usb_reset.c carries an existing thread on line 42.

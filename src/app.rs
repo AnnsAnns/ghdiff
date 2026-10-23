@@ -47,6 +47,7 @@ pub enum LineMeta {
     },
     Comment {
         thread: usize,
+        comment: usize,
     },
     Spacer,
 }
@@ -99,6 +100,14 @@ pub enum DraftTarget {
     },
     Reply {
         thread: usize,
+    },
+    /// Reopen an existing draft comment in the composer. When `suggestion`
+    /// is set the editor holds the bare replacement code (the `suggestion`
+    /// fence is added back on save).
+    Edit {
+        thread: usize,
+        comment: usize,
+        suggestion: bool,
     },
 }
 
@@ -396,7 +405,7 @@ impl App {
             .view
             .meta
             .iter()
-            .position(|m| matches!(m, LineMeta::Comment { thread: t } if *t == thread))
+            .position(|m| matches!(m, LineMeta::Comment { thread: t, .. } if *t == thread))
         {
             self.view.cursor = pos;
             self.ensure_visible();
@@ -603,9 +612,12 @@ impl App {
                 if let Some(threads) = by_anchor.get(&(hi, li)) {
                     for &ti in threads {
                         let box_lines = self.comment_box(ti, gutter as usize, width);
-                        for l in box_lines {
+                        for (l, ci) in box_lines {
                             lines.push(l);
-                            meta.push(LineMeta::Comment { thread: ti });
+                            meta.push(LineMeta::Comment {
+                                thread: ti,
+                                comment: ci,
+                            });
                         }
                         lines.push(Line::from(""));
                         meta.push(LineMeta::Spacer);
@@ -635,9 +647,12 @@ impl App {
             meta.push(LineMeta::Hunk);
             for ti in floating {
                 let box_lines = self.comment_box(ti, gutter as usize, width);
-                for l in box_lines {
+                for (l, ci) in box_lines {
                     lines.push(l);
-                    meta.push(LineMeta::Comment { thread: ti });
+                    meta.push(LineMeta::Comment {
+                        thread: ti,
+                        comment: ci,
+                    });
                 }
                 lines.push(Line::from(""));
                 meta.push(LineMeta::Spacer);
@@ -656,13 +671,15 @@ impl App {
         self.ensure_visible();
     }
 
-    fn comment_box(&self, ti: usize, indent: usize, width: u16) -> Vec<Line<'static>> {
+    /// The rendered lines of a thread, each tagged with the index of the
+    /// comment it belongs to (so the cursor can address a single comment).
+    fn comment_box(&self, ti: usize, indent: usize, width: u16) -> Vec<(Line<'static>, usize)> {
         let t = &self.threads[ti];
         let indent = indent.min(width as usize);
         let avail = (width as usize).saturating_sub(indent);
         let inner = avail.saturating_sub(4).max(8);
         let pad: String = " ".repeat(indent);
-        let mut out: Vec<Line<'static>> = Vec::new();
+        let mut out: Vec<(Line<'static>, usize)> = Vec::new();
 
         for (ci, c) in t.comments.iter().enumerate() {
             let corner = if ci == 0 { "╭─" } else { "├─" };
@@ -709,14 +726,21 @@ impl App {
                     Style::default().fg(theme::t().green),
                 ));
             }
-            out.push(Line::from(head));
+            out.push((Line::from(head), ci));
 
-            push_comment_body(&mut out, &pad, &c.body, inner);
+            let mut body: Vec<Line<'static>> = Vec::new();
+            push_comment_body(&mut body, &pad, &c.body, inner);
+            out.extend(body.into_iter().map(|l| (l, ci)));
         }
-        out.push(Line::from(vec![
-            Span::styled(pad, Style::default()),
-            Span::styled("╰─".to_string(), Style::default().fg(theme::t().faint)),
-        ]));
+        // The closing corner belongs to the last comment of the thread.
+        let last = t.comments.len().saturating_sub(1);
+        out.push((
+            Line::from(vec![
+                Span::styled(pad, Style::default()),
+                Span::styled("╰─".to_string(), Style::default().fg(theme::t().faint)),
+            ]),
+            last,
+        ));
         out
     }
 
@@ -880,9 +904,17 @@ impl App {
         }
     }
 
+    /// The thread and comment indices of the comment row under the cursor.
+    fn comment_at_cursor(&self) -> Option<(usize, usize)> {
+        match self.view.meta.get(self.view.cursor) {
+            Some(LineMeta::Comment { thread, comment }) => Some((*thread, *comment)),
+            _ => None,
+        }
+    }
+
     fn thread_at_cursor(&self) -> Option<usize> {
         match self.view.meta.get(self.view.cursor) {
-            Some(LineMeta::Comment { thread }) => Some(*thread),
+            Some(LineMeta::Comment { thread, .. }) => Some(*thread),
             Some(LineMeta::Code { hunk, line, .. }) => {
                 self.visible_thread_indices().into_iter().find(|&ti| {
                     self.threads[ti].anchor
@@ -1118,7 +1150,14 @@ impl App {
         };
         let raw = draft.editor.text();
         let target = draft.target.clone();
-        let is_suggestion = matches!(target, DraftTarget::Suggestion { .. });
+        let is_suggestion = matches!(
+            target,
+            DraftTarget::Suggestion { .. }
+                | DraftTarget::Edit {
+                    suggestion: true,
+                    ..
+                }
+        );
         if !is_suggestion && raw.trim().is_empty() {
             if let Some(d) = self.draft.as_mut() {
                 d.error = Some("comment is empty".to_string());
@@ -1157,6 +1196,18 @@ impl App {
             DraftTarget::Reply { thread } => {
                 if let Some(t) = self.threads.get_mut(thread) {
                     t.comments.push(draft_comment(body));
+                }
+            }
+            DraftTarget::Edit {
+                thread, comment, ..
+            } => {
+                if let Some(c) = self
+                    .threads
+                    .get_mut(thread)
+                    .and_then(|t| t.comments.get_mut(comment))
+                {
+                    c.body = body;
+                    new_thread = Some(thread);
                 }
             }
         }
@@ -1209,38 +1260,68 @@ impl App {
             .sum()
     }
 
-    /// Remove the draft comment under the cursor.
-    fn discard_draft_at_cursor(&mut self) {
-        match self.view.meta.get(self.view.cursor) {
-            Some(LineMeta::Comment { thread }) => {
-                let thread = *thread;
-                if thread >= self.threads.len() {
-                    return;
-                }
-                if self.threads[thread].id.starts_with("draft-") {
-                    self.threads.remove(thread);
-                    self.status = "Draft comment discarded".to_string();
-                } else {
-                    let had_pending = self.threads[thread]
-                        .comments
-                        .iter()
-                        .rposition(|c| c.pending);
-                    match had_pending {
-                        Some(idx) => {
-                            self.threads[thread].comments.remove(idx);
-                            self.status = "Draft reply discarded".to_string();
-                        }
-                        None => {
-                            self.status = "Only draft comments can be discarded".to_string();
-                            return;
-                        }
-                    }
-                }
-                self.view_dirty = true;
-                self.ensure_view();
-            }
-            _ => self.status = "Move onto a draft comment to discard it".to_string(),
+    /// Reopen the draft comment under the cursor in the composer, pre-filled
+    /// with its current body (the bare replacement code for a suggestion).
+    fn edit_draft_at_cursor(&mut self) {
+        let Some((thread, comment)) = self.comment_at_cursor() else {
+            self.status = "Move onto a draft comment to edit it".to_string();
+            return;
+        };
+        let Some(c) = self
+            .threads
+            .get(thread)
+            .and_then(|t| t.comments.get(comment))
+        else {
+            return;
+        };
+        if !c.pending {
+            self.status = "Only draft comments can be edited".to_string();
+            return;
         }
+        let (text, suggestion) = match suggestion_code(&c.body) {
+            Some(code) => (code.to_string(), true),
+            None => (c.body.clone(), false),
+        };
+        self.visual_start = None;
+        self.draft = Some(Draft {
+            target: DraftTarget::Edit {
+                thread,
+                comment,
+                suggestion,
+            },
+            editor: Editor::from_text(&text),
+            submitting: false,
+            error: None,
+        });
+        self.status = "Editing draft — Ctrl+S to save, Esc to cancel".to_string();
+    }
+
+    /// Remove the draft comment under the cursor. Discarding the only comment
+    /// of a draft thread removes the thread itself.
+    fn discard_draft_at_cursor(&mut self) {
+        let Some((thread, comment)) = self.comment_at_cursor() else {
+            self.status = "Move onto a draft comment to discard it".to_string();
+            return;
+        };
+        let Some(t) = self.threads.get(thread) else {
+            return;
+        };
+        if !t.comments.get(comment).map(|c| c.pending).unwrap_or(false) {
+            self.status = "Only draft comments can be discarded".to_string();
+            return;
+        }
+        let reply = !self.threads[thread].id.starts_with("draft-");
+        self.threads[thread].comments.remove(comment);
+        if self.threads[thread].comments.is_empty() {
+            self.threads.remove(thread);
+        }
+        self.status = if reply {
+            "Draft reply discarded".to_string()
+        } else {
+            "Draft comment discarded".to_string()
+        };
+        self.view_dirty = true;
+        self.ensure_view();
     }
 
     // -----------------------------------------------------------------------
@@ -1376,6 +1457,7 @@ impl App {
             KeyCode::Char('d') if ctrl => self.half_page(true),
             KeyCode::Char('u') if ctrl => self.half_page(false),
             KeyCode::Char('d') => self.discard_draft_at_cursor(),
+            KeyCode::Char('i') => self.edit_draft_at_cursor(),
             KeyCode::Char('g') => {
                 self.view.cursor = 0;
                 self.view.scroll = 0;
@@ -1870,6 +1952,12 @@ fn is_quit(key: &KeyEvent) -> bool {
 /// Wrap replacement code in a GitHub `suggestion` fence.
 pub fn suggestion_body(code: &str) -> String {
     format!("```suggestion\n{code}\n```")
+}
+
+/// The inverse of [`suggestion_body`]: the bare replacement code of a comment
+/// that is exactly one `suggestion` fence.
+pub fn suggestion_code(body: &str) -> Option<&str> {
+    body.strip_prefix("```suggestion\n")?.strip_suffix("\n```")
 }
 
 /// Render a comment body, giving GitHub `suggestion` blocks a diff-like tint.

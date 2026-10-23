@@ -442,7 +442,7 @@ fn draw_footer(frame: &mut Frame, app: &App, area: Rect) {
     let hints = if app.draft.is_some() {
         " Ctrl+S save · Esc cancel · Enter newline"
     } else {
-        " Tab focus · j/k move · c comment · s suggest · v range · d discard · S review · L since · e editor · T terminal · ? help · q quit"
+        " Tab focus · j/k move · c comment · s suggest · v range · i edit · d discard · S review · L since · e editor · T terminal · ? help · q quit"
     };
     let line = if !app.status.is_empty() {
         Line::from(vec![
@@ -640,7 +640,14 @@ fn draw_draft(frame: &mut Frame, app: &App, draft: &crate::app::Draft) {
     let y = area.y + area.height.saturating_sub(height + 2);
     let rect = Rect::new(x, y, width, height);
 
-    let is_suggestion = matches!(draft.target, DraftTarget::Suggestion { .. });
+    let is_suggestion = matches!(
+        draft.target,
+        DraftTarget::Suggestion { .. }
+            | DraftTarget::Edit {
+                suggestion: true,
+                ..
+            }
+    );
     let title = match &draft.target {
         DraftTarget::NewLine {
             path,
@@ -674,6 +681,24 @@ fn draw_draft(frame: &mut Frame, app: &App, draft: &crate::app::Draft) {
                 .map(|c| c.author.clone())
                 .unwrap_or_default();
             format!(" reply to @{who} ")
+        }
+        DraftTarget::Edit {
+            thread, suggestion, ..
+        } => {
+            let range = app
+                .threads
+                .get(*thread)
+                .map(|t| match (t.start_line, t.line) {
+                    (Some(s), Some(l)) if s != l => format!("{}:{s}-{l}", t.path),
+                    (_, Some(l)) => format!("{}:{l}", t.path),
+                    _ => t.path.clone(),
+                })
+                .unwrap_or_default();
+            if *suggestion {
+                format!(" edit suggested change · {range} ")
+            } else {
+                format!(" edit comment · {range} ")
+            }
         }
     };
     let border = if is_suggestion {
@@ -934,6 +959,7 @@ fn draw_help(frame: &mut Frame, area: Rect) {
             "s",
             "suggest a code change on the line or selection (a draft)",
         ),
+        ("i", "edit the draft comment under the cursor"),
         ("d", "discard the draft comment under the cursor"),
         ("v / V", "start a range selection, then c to comment on it"),
         ("r", "reply to the comment thread at the cursor"),
